@@ -48,7 +48,10 @@ export default defineConfig(async () => {
       host: process.env.HOST ?? "127.0.0.1",
       port: Number(process.env.PORT ?? 3000),
       strictPort: true,
-      allowedHosts: ["terminal.local"],
+      allowedHosts: [
+        "terminal.local",
+        "llmtest.kokorosoft.cl",
+      ],
       ...(isCodexSeatbeltSandbox
         ? { watch: { useFsEvents: false, usePolling: true } }
         : {}),
