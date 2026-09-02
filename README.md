@@ -42,7 +42,7 @@ La configuración que coincide con tu vLLM actual es:
 ```dotenv
 LLM_PROVIDER=vllm
 LLM_BASE_URL=http://127.0.0.1:8000
-LLM_MODEL=meta-llama/Llama-3.2-1B-Instruct
+LLM_MODEL=Qwen/Qwen3.5-0.8B
 ```
 
 Para Ollama:
@@ -62,6 +62,15 @@ quedan publicados solamente en `127.0.0.1`; el navegador y el túnel deben
 conectarse al gateway en el puerto `3000`, no directamente al puerto `8000` ni
 al `11434`.
 
+El perfil predeterminado usa `Qwen/Qwen3.5-0.8B` en modo solo texto. Para la
+RTX 3060 Laptop de 6 GB se reservan como máximo aproximadamente el 60 % de la
+VRAM para vLLM, con contexto de 2048 tokens, una sola secuencia y un lote de
+1024 tokens. `--enforce-eager` reduce el consumo de memoria de los CUDA graphs.
+El flag `--language-model-only` evita cargar el componente visual de Qwen3.5,
+porque esta interfaz únicamente envía y recibe texto. También se fija
+`enable_thinking=false` para que la respuesta visible no pierda tokens en un
+bloque de razonamiento interno.
+
 El script `comandos.fish` evita que vLLM y Ollama ocupen la GPU al mismo tiempo:
 
 ```bash
@@ -69,6 +78,9 @@ chmod +x comandos.fish
 
 # vLLM; solicita HF_TOKEN si no está definido en la terminal
 ./comandos.fish vllm
+
+# Opcional: probar otro tamaño. Debes poner el mismo nombre en .env.local.
+# ./comandos.fish vllm Qwen/Qwen3.5-2B
 
 # Ollama; el modelo es opcional y tiene un valor predeterminado
 ./comandos.fish ollama llama3.2:1b-instruct-fp16
@@ -82,7 +94,7 @@ Después de iniciar vLLM, usa en `.env.local`:
 ```dotenv
 LLM_PROVIDER=vllm
 LLM_BASE_URL=http://127.0.0.1:8000
-LLM_MODEL=meta-llama/Llama-3.2-1B-Instruct
+LLM_MODEL=Qwen/Qwen3.5-0.8B
 ```
 
 Después de iniciar Ollama, usa:
@@ -134,6 +146,47 @@ solo en `sessionStorage`.
 El Quick Tunnel es temporal y su URL cambia al reiniciarlo. Para una URL fija
 se puede usar un túnel nombrado con un subdominio propio; esa evolución no
 cambia el gateway ni los adaptadores.
+
+## Vercel más túnel hacia el gateway local
+
+La interfaz también puede publicarse en Vercel manteniendo el gateway y el
+modelo en el computador:
+
+```text
+Vercel → URL pública del túnel → gateway local:3000 → vLLM/Ollama local
+```
+
+El proyecto incluye `vercel.json` y `npm run build:vercel` para el despliegue
+con Next.js en Vercel. La variable `NEXT_PUBLIC_GATEWAY_URL` se inserta en el
+código del navegador, por lo que solo debe contener la URL del túnel; no es un
+lugar para guardar tokens o claves.
+
+### Configuración del gateway local
+
+Después de obtener la URL del proyecto en Vercel, añade en `.env.local` el
+origen exacto de la página:
+
+```dotenv
+APP_CORS_ORIGIN=https://tu-proyecto.vercel.app
+```
+
+Reinicia `npm run dev` después de cambiar esta variable.
+
+### Configuración de Vercel
+
+En las variables de entorno del proyecto Vercel define:
+
+```text
+NEXT_PUBLIC_GATEWAY_URL=https://URL-ACTUAL-DEL-TUNEL
+```
+
+No subas `.env.local` ni configures `HF_TOKEN`, `LLM_API_KEY` o `APP_TOKEN` en
+Vercel. El `APP_TOKEN` permanece en el gateway local y se introduce en la
+interfaz.
+
+Un Quick Tunnel gratuito puede cambiar de URL al reiniciarse. Si cambia, hay
+que actualizar `NEXT_PUBLIC_GATEWAY_URL` en Vercel y volver a desplegar. Más
+adelante conviene usar un túnel con hostname estable.
 
 ### Subdominio propio mediante Cloudflare Tunnel
 
@@ -191,6 +244,8 @@ Después, `npm run tunnel` puede apuntar al mismo puerto `3000`.
 | `LLM_TEMPERATURE` | Temperatura común a ambos adaptadores. |
 | `LLM_TIMEOUT_MS` | Tiempo máximo de espera de una respuesta. |
 | `APP_TOKEN` | Protege `/api/chat` y `/api/health`; recomendado con túnel. |
+| `NEXT_PUBLIC_GATEWAY_URL` | URL pública del gateway para la interfaz desplegada en Vercel. |
+| `APP_CORS_ORIGIN` | Origen de Vercel autorizado para llamar al gateway. |
 | `HOST` / `PORT` | Escucha local de la interfaz. Mantén `HOST=127.0.0.1`. |
 
 ## Endpoints internos

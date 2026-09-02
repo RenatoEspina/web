@@ -14,11 +14,31 @@ services:
     cpuset: "0-11"
     ipc: host
     command:
-      - meta-llama/Llama-3.2-1B-Instruct
+      # Perfil conservador para una RTX 3060 Laptop con 6 GB de VRAM.
+      # Se puede sobrescribir al ejecutar: VLLM_MODEL=... docker compose up -d vllm
+      - ${VLLM_MODEL:-Qwen/Qwen3.5-0.8B}
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --dtype
+      - float16
+      # La interfaz solo usa texto; no cargamos el encoder visual.
+      - --language-model-only
+      # Qwen3.5-0.8B es no-thinking por defecto; lo fijamos para no consumir
+      # el límite de salida con razonamiento oculto.
+      - --default-chat-template-kwargs
+      - '{"enable_thinking":false}'
       - --gpu-memory-utilization
-      - "0.60"
+      - "${VLLM_GPU_MEMORY_UTILIZATION:-0.80}"
       - --max-model-len
-      - "2048"
+      - "${VLLM_MAX_MODEL_LEN:-4096}"
+      # Una sola solicitud evita que varias peticiones agoten la VRAM.
+      - --max-num-seqs
+      - "${VLLM_MAX_NUM_SEQS:-1}"
+      - --max-num-batched-tokens
+      - "${VLLM_MAX_NUM_BATCHED_TOKENS:-2048}"
+      - --enforce-eager
     deploy:
       resources:
         reservations:

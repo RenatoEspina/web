@@ -3,7 +3,7 @@ import type { LlmConfig, ProviderName } from "./types";
 const DEFAULTS: Record<ProviderName, { baseUrl: string; model: string }> = {
   vllm: {
     baseUrl: "http://127.0.0.1:8000",
-    model: "meta-llama/Llama-3.2-1B-Instruct",
+    model: "Qwen/Qwen3.5-0.8B",
   },
   ollama: {
     baseUrl: "http://127.0.0.1:11434",
@@ -37,7 +37,7 @@ export function getLlmConfig(): LlmConfig {
     model: readEnv("LLM_MODEL") ?? defaults.model,
     apiKey: readEnv("LLM_API_KEY") ?? "",
     maxTokens: numberEnv("LLM_MAX_TOKENS", 512, 1, 4096),
-    temperature: numberEnv("LLM_TEMPERATURE", 0.2, 0, 2),
+    temperature: numberEnv("LLM_TEMPERATURE", 1.0, 0, 2),
     timeoutMs: numberEnv("LLM_TIMEOUT_MS", 120_000, 5_000, 600_000),
   };
 }

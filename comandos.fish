@@ -2,7 +2,7 @@
 
 # Arranque local de vLLM/Ollama para LLM Bridge Chat.
 # Uso:
-#   ./comandos.fish vllm
+#   ./comandos.fish vllm [modelo]
 #   ./comandos.fish ollama [modelo]
 #   ./comandos.fish status
 #   ./comandos.fish stop
@@ -71,6 +71,15 @@ function stop_service
 end
 
 function start_vllm
+    set -l model "Qwen/Qwen3.5-0.8B"
+    if set -q VLLM_MODEL; and test -n "$VLLM_MODEL"
+        set model "$VLLM_MODEL"
+    end
+    if test (count $argv) -ge 1; and test -n "$argv[1]"
+        set model "$argv[1]"
+    end
+    set -gx VLLM_MODEL $model
+
     stop_service ollama
 
     if not set -q HF_TOKEN; or test -z "$HF_TOKEN"
@@ -90,6 +99,7 @@ function start_vllm
         compose pull vllm; or fail "No fue posible descargar la imagen de vLLM."
     end
 
+    echo "Modelo vLLM: $model"
     echo "Iniciando vLLM. La primera ejecución puede descargar el modelo..."
     compose up -d vllm; or begin
         compose logs --no-color --tail=100 vllm
@@ -143,7 +153,7 @@ end
 
 switch $argv[1]
     case vllm
-        start_vllm
+        start_vllm $argv[2]
     case ollama
         start_ollama $argv[2]
     case status
