@@ -5,8 +5,10 @@ del usuario. El navegador llama únicamente al backend propio (`/api/chat`); el
 backend selecciona un adaptador para vLLM u Ollama y mantiene sus URLs y claves
 fuera del navegador.
 
-La interfaz está pensada para texto: no sube archivos, no guarda conversaciones
-en una base de datos y conserva el historial solo en la sesión del navegador.
+La interfaz está pensada para texto y permite cargar PDF con texto seleccionable
+para consultarlos mediante RAG o CAG. El índice documental de esta primera
+versión vive en la memoria del gateway y se separa por un identificador local
+del navegador; no se guardan los PDF en una base de datos.
 
 ## Requisitos
 
@@ -25,6 +27,51 @@ El adaptador OpenAI-compatible cubre vLLM y permite sustituirlo por otros
 servidores que expongan `/v1/chat/completions`. El adaptador de Ollama usa
 `/api/chat`. Para cambiar de proveedor se modifica el `.env.local`; no se toca
 la interfaz.
+
+## RAG y CAG para PDF
+
+La biblioteca documental se encuentra en el mismo gateway y se accede desde la
+interfaz con `Agregar PDF`. Cada PDF se procesa en el computador que ejecuta
+LLM Bridge:
+
+```text
+navegador → POST /api/documents → extracción de texto → fragmentación → índice temporal
+chat      → POST /api/chat      → RAG/CAG → contexto → vLLM u Ollama
+```
+
+### RAG
+
+RAG (Retrieval-Augmented Generation) busca, para cada pregunta, los fragmentos
+con mayor coincidencia léxica dentro de los PDF seleccionados. Esta versión no
+descarga otro modelo de embeddings ni utiliza la GPU para indexar; es un
+recuperador determinista apropiado para el MVP y mantiene la aplicación
+independiente del proveedor LLM. Las respuestas muestran el nombre del PDF y
+las páginas de los fragmentos usados.
+
+### CAG
+
+CAG (Cache-Augmented Generation) prepara y mantiene en memoria el contexto de
+los PDF seleccionados para reutilizarlo en preguntas posteriores. Es adecuado
+para uno o pocos documentos pequeños. El límite de contexto evita enviar más
+texto del que puede manejar razonablemente la configuración actual de vLLM.
+Esta implementación es una caché de contexto del gateway; no pretende ser una
+KV cache persistente dentro de la VRAM de vLLM.
+
+### Límites y alcance actual
+
+- Solo se aceptan PDF con texto seleccionable. Un PDF escaneado necesita OCR,
+  que queda como mejora posterior.
+- Por defecto se admiten 10 MB, 100 páginas, 10 documentos por espacio,
+  400.000 caracteres por documento y 16 espacios activos en memoria.
+- El índice se pierde al reiniciar el gateway o el proceso Worker. Hay un
+  espacio independiente por navegador para que dos usuarios del túnel no
+  mezclen sus bibliotecas por accidente.
+- La primera versión usa coincidencia léxica, no búsqueda vectorial. Para una
+  evolución con muchos documentos conviene conservar estas interfaces y
+  reemplazar el almacén temporal por D1/R2 más un índice vectorial.
+
+Los límites se pueden ajustar en `.env.local`; las variables disponibles están
+documentadas en `.env.example`.
 
 ## Ejecución local
 
@@ -257,7 +304,19 @@ Después, `npm run tunnel` puede apuntar al mismo puerto `3000`.
   `{ "message": "..." }`.
 
 El gateway limita cada mensaje a 12.000 caracteres y el historial a los 20
-mensajes más recientes. Las respuestas no se almacenan en el servidor.
+mensajes más recientes. Cuando se usa RAG o CAG, el historial se reduce además
+para reservar espacio al contexto documental. Las respuestas no se almacenan
+en el servidor.
+
+### Endpoints documentales
+
+- `GET /api/documents`: lista los PDF indexados en el espacio del navegador.
+- `POST /api/documents`: recibe un campo multipart llamado `file` y procesa un
+  PDF.
+- `DELETE /api/documents?id=...`: elimina un PDF del espacio actual.
+
+Los endpoints documentales requieren el mismo `APP_TOKEN` que `/api/chat` y
+usan el encabezado `x-workspace-id`, generado automáticamente por la interfaz.
 
 ## Verificación
 

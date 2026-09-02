@@ -1,3 +1,5 @@
+import { buildKnowledgeContext, type KnowledgeMode } from "@/lib/documents";
+import { withKnowledge } from "@/lib/documents/prompt";
 import { complete } from "@/lib/llm";
 import { getAppToken, getLlmConfig } from "@/lib/llm/config";
 import type { ChatMessage, ChatRole } from "@/lib/llm/types";
@@ -6,6 +8,9 @@ export const dynamic = "force-dynamic";
 
 const MAX_MESSAGE_CHARS = 12_000;
 const MAX_HISTORY_ITEMS = 20;
+const MAX_HISTORY_CHARS = 8_000;
+const MAX_KNOWLEDGE_HISTORY_CHARS = 4_000;
+const WORKSPACE_ID_PATTERN = /^[A-Za-z0-9_-]{16,80}$/;
 
 function unauthorized(request: Request): boolean {
   const appToken = getAppToken();
@@ -37,14 +42,38 @@ function sanitizeHistory(value: unknown): ChatMessage[] {
     .filter((item) => item.content.length <= MAX_MESSAGE_CHARS);
 }
 
+function limitHistory(history: ChatMessage[], maxCharacters: number): ChatMessage[] {
+  const result: ChatMessage[] = [];
+  let characters = 0;
+
+  for (const item of [...history].reverse()) {
+    if (characters + item.content.length > maxCharacters) break;
+    result.unshift(item);
+    characters += item.content.length;
+  }
+
+  return result;
+}
+
+function knowledgeMode(value: unknown): KnowledgeMode {
+  return value === "rag" || value === "cag" ? value : "none";
+}
+
+function documentIds(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return [...new Set(value
+    .filter((item): item is string => typeof item === "string" && /^[A-Za-z0-9-]{16,100}$/.test(item))
+    .slice(0, 20))];
+}
+
 export async function POST(request: Request) {
   if (unauthorized(request)) {
     return Response.json({ error: "Se requiere una clave de acceso." }, { status: 401 });
   }
 
-  let body: { message?: unknown; history?: unknown };
+  let body: { message?: unknown; history?: unknown; mode?: unknown; documentIds?: unknown };
   try {
-    body = (await request.json()) as { message?: unknown; history?: unknown };
+    body = (await request.json()) as { message?: unknown; history?: unknown; mode?: unknown; documentIds?: unknown };
   } catch {
     return Response.json({ error: "El cuerpo de la petición no es JSON válido." }, { status: 400 });
   }
@@ -57,15 +86,36 @@ export async function POST(request: Request) {
     return Response.json({ error: `El mensaje supera el límite de ${MAX_MESSAGE_CHARS} caracteres.` }, { status: 413 });
   }
 
+  const mode = knowledgeMode(body.mode);
+  const selectedDocumentIds = documentIds(body.documentIds);
+  const workspaceId = request.headers.get("x-workspace-id")?.trim() ?? "";
+  if (mode !== "none" && !WORKSPACE_ID_PATTERN.test(workspaceId)) {
+    return Response.json({ error: "El espacio de documentos no es válido." }, { status: 400 });
+  }
+
+  const history = limitHistory(
+    sanitizeHistory(body.history),
+    mode === "none" ? MAX_HISTORY_CHARS : MAX_KNOWLEDGE_HISTORY_CHARS,
+  );
   const messages: ChatMessage[] = [
-    ...sanitizeHistory(body.history),
+    ...history,
     { role: "user", content: message },
   ];
 
   try {
     const config = getLlmConfig();
-    const answer = await complete(messages, AbortSignal.timeout(config.timeoutMs));
-    return Response.json({ message: answer, provider: config.provider });
+    const knowledge = mode === "none"
+      ? null
+      : buildKnowledgeContext(workspaceId, mode, message, selectedDocumentIds);
+    const requestMessages = knowledge ? withKnowledge(messages, knowledge) : messages;
+    const answer = await complete(requestMessages, AbortSignal.timeout(config.timeoutMs));
+    return Response.json({
+      message: answer,
+      provider: config.provider,
+      mode,
+      sources: knowledge?.sources ?? [],
+      cacheHit: knowledge?.cacheHit ?? false,
+    });
   } catch (error) {
     console.error("[llm-bridge] Chat request failed", error);
     if (error instanceof Error && error.name === "TimeoutError") {
