@@ -61,6 +61,11 @@ También se puede usar un servidor vLLM separado que exponga
 modelo de embeddings. El vLLM que sirve `Qwen/Qwen3.5-0.8B` para chat no se
 convierte automáticamente en un modelo de embeddings.
 
+La integración con Ollama usa el endpoint actual `/api/embed` y puede enviar
+varios fragmentos por lote. Si `EMBEDDING_ENABLED=false`, el gateway omite la
+recuperación semántica y usa únicamente el recuperador léxico, aunque haya un
+valor obsoleto o inválido en `EMBEDDING_PROVIDER`.
+
 ### CAG
 
 CAG (Cache-Augmented Generation) prepara y mantiene en memoria el contexto de

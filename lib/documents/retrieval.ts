@@ -1,4 +1,4 @@
-import { embedText, getEmbeddingConfig } from "../embeddings";
+import { embedText } from "../embeddings";
 
 import { getDocumentConfig } from "./config";
 import { getCachedCagContext, getDocuments, setCachedCagContext } from "./store";
@@ -111,7 +111,7 @@ async function rankChunks(query: string, chunks: DocumentChunk[]): Promise<Ranke
   let embeddingUsed = false;
 
   const hasStoredEmbeddings = chunks.some((chunk) => Array.isArray(chunk.embedding) && chunk.embedding.length > 0);
-  if (hasStoredEmbeddings && getEmbeddingConfig().enabled) {
+  if (hasStoredEmbeddings) {
     try {
       const queryEmbedding = await embedText(query, "query");
       if (queryEmbedding) {
@@ -257,13 +257,16 @@ async function buildCag(workspaceId: string, query: string, ids?: string[]): Pro
   let remaining = config.maxCagContextCharacters;
   const blocks: string[] = [];
   const sources: KnowledgeSource[] = [];
+  const rankedByChunkId = new Map<string, RankedChunk>(
+    ranked?.map((item) => [item.chunk.id, item]) ?? [],
+  );
 
   for (const chunk of contextChunks) {
     if (remaining <= 0) break;
     const block = contextBlock(chunk).slice(0, remaining);
     if (!block) continue;
     blocks.push(block);
-    const result = ranked?.find((item) => item.chunk.id === chunk.id);
+    const result = rankedByChunkId.get(chunk.id);
     sources.push(sourceFor(chunk, result));
     remaining -= block.length + 2;
   }
