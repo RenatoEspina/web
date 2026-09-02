@@ -16,6 +16,8 @@ export function getDocumentConfig() {
     chunkSize: readNumber("RAG_CHUNK_SIZE", 1_200, 400, 4_000),
     chunkOverlap: readNumber("RAG_CHUNK_OVERLAP", 180, 0, 800),
     topK: readNumber("RAG_TOP_K", 4, 1, 12),
+    semanticWeight: readNumber("RAG_SEMANTIC_WEIGHT", 70, 0, 100) / 100,
+    lexicalWeight: readNumber("RAG_LEXICAL_WEIGHT", 30, 0, 100) / 100,
     maxRagContextCharacters: readNumber("RAG_MAX_CONTEXT_CHARACTERS", 7_000, 1_000, 30_000),
     maxCagContextCharacters: readNumber("CAG_MAX_CONTEXT_CHARACTERS", 8_000, 1_000, 30_000),
   };
