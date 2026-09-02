@@ -592,9 +592,9 @@ export default function Home() {
                     <p className="message-content">{message.content}</p>
                     {message.sources && message.sources.length > 0 && (
                       <div className="message-sources" aria-label="Fuentes consultadas">
-                        {[...new Map(message.sources.map((source) => [`${source.documentId}-${source.page}`, source])).values()]
+                        {[...new Map(message.sources.map((source) => [`${source.documentId}-${source.chunkId}`, source])).values()]
                           .map((source) => (
-                            <span className="source-pill" key={`${source.documentId}-${source.page}`}>
+                            <span className="source-pill" key={`${source.documentId}-${source.chunkId}`}>
                               <FileText size={12} /> {source.documentName} · p. {source.page}{source.pageEnd && source.pageEnd > source.page ? `-${source.pageEnd}` : ""}
                             </span>
                           ))}
