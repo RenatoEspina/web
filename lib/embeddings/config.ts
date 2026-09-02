@@ -45,16 +45,24 @@ function readNumber(name: string, fallback: number, min: number, max: number): n
 }
 
 export function getEmbeddingConfig(): EmbeddingConfig {
+  const enabled = readBoolean("EMBEDDING_ENABLED", true);
   const requestedProvider = (readEnv("EMBEDDING_PROVIDER") ?? "ollama").toLocaleLowerCase("en-US");
-  if (requestedProvider !== "ollama" && requestedProvider !== "vllm") {
+  let provider: EmbeddingProviderName;
+
+  if (requestedProvider === "ollama" || requestedProvider === "vllm") {
+    provider = requestedProvider;
+  } else if (enabled) {
     throw new Error("EMBEDDING_PROVIDER debe ser ollama o vllm.");
+  } else {
+    // A disabled index must remain a valid lexical-only configuration even if
+    // a stale provider value remains in the environment.
+    provider = "ollama";
   }
 
-  const provider = requestedProvider as EmbeddingProviderName;
   const defaults = DEFAULTS[provider];
 
   return {
-    enabled: readBoolean("EMBEDDING_ENABLED", true),
+    enabled,
     provider,
     baseUrl: (readEnv("EMBEDDING_BASE_URL") ?? defaults.baseUrl).replace(/\/+$/, ""),
     model: readEnv("EMBEDDING_MODEL") ?? defaults.model,
