@@ -5,8 +5,10 @@ export interface DocumentChunk {
   documentId: string;
   documentName: string;
   page: number;
+  pageEnd?: number;
   index: number;
   text: string;
+  embedding?: number[];
 }
 
 export interface IndexedDocument {
@@ -17,6 +19,9 @@ export interface IndexedDocument {
   characters: number;
   chunks: DocumentChunk[];
   createdAt: number;
+  embeddingProvider?: string;
+  embeddingModel?: string;
+  embeddingDimension?: number;
 }
 
 export interface DocumentSummary {
@@ -27,15 +32,21 @@ export interface DocumentSummary {
   characters: number;
   chunks: number;
   createdAt: number;
+  embeddingProvider?: string;
+  embeddingModel?: string;
+  embeddingDimension?: number;
 }
 
 export interface KnowledgeSource {
   documentId: string;
   documentName: string;
   page: number;
+  pageEnd?: number;
   chunkId: string;
   snippet: string;
   score?: number;
+  lexicalScore?: number;
+  semanticScore?: number;
 }
 
 export interface KnowledgeContext {
@@ -43,4 +54,6 @@ export interface KnowledgeContext {
   text: string;
   sources: KnowledgeSource[];
   cacheHit: boolean;
+  embeddingUsed: boolean;
+  truncated: boolean;
 }
