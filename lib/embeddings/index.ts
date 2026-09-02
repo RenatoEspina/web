@@ -5,7 +5,6 @@ import type { EmbeddingConfig, EmbeddingInputType } from "./types";
 
 type OllamaResponse = {
   embeddings?: unknown;
-  embedding?: unknown;
 };
 
 type VllmResponse = {
@@ -75,23 +74,6 @@ async function embedWithOllama(
     body: JSON.stringify({ model: config.model, input: texts }),
     signal,
   });
-
-  if (response.status === 404) {
-    // Ollama versions before /api/embed accepted one text at a time through
-    // /api/embeddings. Keeping this fallback costs nothing for current builds
-    // and makes the gateway usable with an older local Ollama installation.
-    const legacyVectors = await Promise.all(texts.map(async (text) => {
-      const legacyResponse = await fetch(endpoint(config.baseUrl, "/api/embeddings"), {
-        method: "POST",
-        headers: headers(config),
-        body: JSON.stringify({ model: config.model, prompt: text }),
-        signal,
-      });
-      const data = await readJson(legacyResponse, "Ollama");
-      return (data as OllamaResponse).embedding;
-    }));
-    return validateVectors(legacyVectors, texts.length);
-  }
 
   const data = await readJson(response, "Ollama") as OllamaResponse;
   return validateVectors(data.embeddings, texts.length);
