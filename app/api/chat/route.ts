@@ -106,7 +106,7 @@ export async function POST(request: Request) {
     const config = getLlmConfig();
     const knowledge = mode === "none"
       ? null
-      : buildKnowledgeContext(workspaceId, mode, message, selectedDocumentIds);
+      : await buildKnowledgeContext(workspaceId, mode, message, selectedDocumentIds);
     const requestMessages = knowledge ? withKnowledge(messages, knowledge) : messages;
     const answer = await complete(requestMessages, AbortSignal.timeout(config.timeoutMs));
     return Response.json({
@@ -115,6 +115,8 @@ export async function POST(request: Request) {
       mode,
       sources: knowledge?.sources ?? [],
       cacheHit: knowledge?.cacheHit ?? false,
+      embeddingUsed: knowledge?.embeddingUsed ?? false,
+      contextTruncated: knowledge?.truncated ?? false,
     });
   } catch (error) {
     console.error("[llm-bridge] Chat request failed", error);

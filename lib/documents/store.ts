@@ -1,10 +1,18 @@
 import { getDocumentConfig } from "./config";
-import type { DocumentSummary, IndexedDocument } from "./types";
+import type { DocumentSummary, IndexedDocument, KnowledgeSource } from "./types";
 
 type Workspace = Map<string, IndexedDocument>;
 
 const workspaces = new Map<string, Workspace>();
-const cagContextCache = new Map<string, { signature: string; text: string }>();
+type CagCacheEntry = {
+  signature: string;
+  text: string;
+  sources: KnowledgeSource[];
+  embeddingUsed: boolean;
+  truncated: boolean;
+};
+
+const cagContextCache = new Map<string, CagCacheEntry>();
 const workspaceActivity = new Map<string, number>();
 
 function workspaceFor(id: string): Workspace {
@@ -30,8 +38,10 @@ function workspaceFor(id: string): Workspace {
   return workspace;
 }
 
-function cacheKey(workspaceId: string, documents: IndexedDocument[]): string {
-  return `${workspaceId}:${documents.map((document) => `${document.id}:${document.createdAt}`).join(",")}`;
+function cacheKey(workspaceId: string, documents: IndexedDocument[], query?: string): string {
+  const documentSignature = documents.map((document) => `${document.id}:${document.createdAt}`).join(",");
+  const querySignature = query ? `:query:${query.trim().toLocaleLowerCase("es-CL")}` : ":complete";
+  return `${workspaceId}:${documentSignature}${querySignature}`;
 }
 
 export function listDocuments(workspaceId: string): DocumentSummary[] {
@@ -45,6 +55,9 @@ export function listDocuments(workspaceId: string): DocumentSummary[] {
       characters: document.characters,
       chunks: document.chunks.length,
       createdAt: document.createdAt,
+      ...(document.embeddingProvider ? { embeddingProvider: document.embeddingProvider } : {}),
+      ...(document.embeddingModel ? { embeddingModel: document.embeddingModel } : {}),
+      ...(document.embeddingDimension ? { embeddingDimension: document.embeddingDimension } : {}),
     }));
 }
 
@@ -68,6 +81,9 @@ export function addDocument(workspaceId: string, document: IndexedDocument): Doc
     characters: document.characters,
     chunks: document.chunks.length,
     createdAt: document.createdAt,
+    ...(document.embeddingProvider ? { embeddingProvider: document.embeddingProvider } : {}),
+    ...(document.embeddingModel ? { embeddingModel: document.embeddingModel } : {}),
+    ...(document.embeddingDimension ? { embeddingDimension: document.embeddingDimension } : {}),
   };
 }
 
@@ -90,13 +106,22 @@ export function getDocuments(workspaceId: string, ids?: string[]): IndexedDocume
   return documents;
 }
 
-export function getCachedCagContext(workspaceId: string, documents: IndexedDocument[]): string | undefined {
-  return cagContextCache.get(cacheKey(workspaceId, documents))?.text;
+export function getCachedCagContext(
+  workspaceId: string,
+  documents: IndexedDocument[],
+  query?: string,
+): CagCacheEntry | undefined {
+  return cagContextCache.get(cacheKey(workspaceId, documents, query));
 }
 
-export function setCachedCagContext(workspaceId: string, documents: IndexedDocument[], text: string): void {
-  const key = cacheKey(workspaceId, documents);
-  cagContextCache.set(key, { signature: key, text });
+export function setCachedCagContext(
+  workspaceId: string,
+  documents: IndexedDocument[],
+  value: Omit<CagCacheEntry, "signature">,
+  query?: string,
+): void {
+  const key = cacheKey(workspaceId, documents, query);
+  cagContextCache.set(key, { signature: key, ...value });
 }
 
 export function clearCagCache(workspaceId: string): void {

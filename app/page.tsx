@@ -42,12 +42,19 @@ type UiMessage = {
   sources?: KnowledgeSource[];
   mode?: KnowledgeMode;
   cacheHit?: boolean;
+  embeddingUsed?: boolean;
+  contextTruncated?: boolean;
 };
 
 type GatewayConfig = {
   provider: "vllm" | "ollama";
   model: string;
   authRequired: boolean;
+  embedding: {
+    enabled: boolean;
+    provider: "vllm" | "ollama";
+    model: string;
+  };
 };
 
 type ConnectionStatus = "checking" | "online" | "offline" | "locked";
@@ -89,9 +96,12 @@ function parseSources(value: unknown): KnowledgeSource[] {
       documentId: item.documentId as string,
       documentName: item.documentName as string,
       page: item.page as number,
+      ...(typeof item.pageEnd === "number" ? { pageEnd: item.pageEnd as number } : {}),
       chunkId: item.chunkId as string,
       snippet: item.snippet as string,
       ...(typeof item.score === "number" ? { score: item.score } : {}),
+      ...(typeof item.lexicalScore === "number" ? { lexicalScore: item.lexicalScore } : {}),
+      ...(typeof item.semanticScore === "number" ? { semanticScore: item.semanticScore } : {}),
     }));
 }
 
@@ -191,6 +201,15 @@ export default function Home() {
           provider: data.provider,
           model: typeof data.model === "string" ? data.model : "modelo configurado",
           authRequired: data.authRequired === true,
+          embedding: data.embedding && typeof data.embedding === "object"
+            ? {
+              enabled: (data.embedding as Record<string, unknown>).enabled !== false,
+              provider: (data.embedding as Record<string, unknown>).provider === "vllm" ? "vllm" : "ollama",
+              model: typeof (data.embedding as Record<string, unknown>).model === "string"
+                ? (data.embedding as Record<string, unknown>).model as string
+                : "modelo de embeddings",
+            }
+            : { enabled: true, provider: "ollama", model: "modelo de embeddings" },
         };
         setConfig(nextConfig);
 
@@ -272,6 +291,8 @@ export default function Home() {
           content: data.message,
           mode: knowledgeMode,
           cacheHit: data.cacheHit === true,
+          embeddingUsed: data.embeddingUsed === true,
+          contextTruncated: data.contextTruncated === true,
           sources: parseSources(data.sources),
         },
       ]);
@@ -457,7 +478,7 @@ export default function Home() {
           <span className="meta-separator">/</span>
           <span className="model-name" title={config?.model}>{config?.model ?? "cargando configuración"}</span>
           <span className="meta-spacer" />
-          <span className="secure-label"><ShieldCheck size={14} /> PDF en memoria · sin persistencia</span>
+          <span className="secure-label"><ShieldCheck size={14} /> PDF en memoria · embeddings {config?.embedding.enabled ? "activos" : "desactivados"}</span>
         </div>
 
         <section className="knowledge-bar" aria-label="Biblioteca documental">
@@ -535,9 +556,9 @@ export default function Home() {
           )}
           <p className="knowledge-hint">
             {knowledgeMode === "cag"
-              ? "CAG mantiene en caché el contexto de los PDF seleccionados; úsalo con documentos pequeños."
+              ? "CAG mantiene en caché el contexto completo; en documentos grandes usa embeddings para elegir una ventana relevante."
               : knowledgeMode === "rag"
-                ? "RAG recupera los fragmentos más relacionados con cada pregunta."
+                ? "RAG combina embeddings semánticos y coincidencia léxica para recuperar los fragmentos más relacionados."
                 : "El chat responderá sin consultar los PDF."}
           </p>
           {documentError && <p className="document-error" role="alert">{documentError}</p>}
@@ -574,7 +595,7 @@ export default function Home() {
                         {[...new Map(message.sources.map((source) => [`${source.documentId}-${source.page}`, source])).values()]
                           .map((source) => (
                             <span className="source-pill" key={`${source.documentId}-${source.page}`}>
-                              <FileText size={12} /> {source.documentName} · p. {source.page}
+                              <FileText size={12} /> {source.documentName} · p. {source.page}{source.pageEnd && source.pageEnd > source.page ? `-${source.pageEnd}` : ""}
                             </span>
                           ))}
                       </div>

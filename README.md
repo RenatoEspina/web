@@ -6,9 +6,9 @@ backend selecciona un adaptador para vLLM u Ollama y mantiene sus URLs y claves
 fuera del navegador.
 
 La interfaz está pensada para texto y permite cargar PDF con texto seleccionable
-para consultarlos mediante RAG o CAG. El índice documental de esta primera
-versión vive en la memoria del gateway y se separa por un identificador local
-del navegador; no se guardan los PDF en una base de datos.
+para consultarlos mediante RAG o CAG. El índice documental y sus embeddings
+viven en la memoria del gateway y se separan por un identificador local del
+navegador; no se guardan los PDF en una base de datos.
 
 ## Requisitos
 
@@ -35,27 +35,42 @@ interfaz con `Agregar PDF`. Cada PDF se procesa en el computador que ejecuta
 LLM Bridge:
 
 ```text
-navegador → POST /api/documents → extracción de texto → fragmentación → índice temporal
+navegador → POST /api/documents → extracción → fragmentación entre páginas → embeddings → índice temporal
 chat      → POST /api/chat      → RAG/CAG → contexto → vLLM u Ollama
 ```
 
 ### RAG
 
-RAG (Retrieval-Augmented Generation) busca, para cada pregunta, los fragmentos
-con mayor coincidencia léxica dentro de los PDF seleccionados. Esta versión no
-descarga otro modelo de embeddings ni utiliza la GPU para indexar; es un
-recuperador determinista apropiado para el MVP y mantiene la aplicación
-independiente del proveedor LLM. Las respuestas muestran el nombre del PDF y
-las páginas de los fragmentos usados.
+RAG (Retrieval-Augmented Generation) genera un embedding por fragmento al
+cargar el PDF y otro por cada pregunta. Después combina similitud coseno
+semántica con coincidencia léxica tipo TF-IDF. Así puede recuperar una idea
+expresada con palabras distintas y seguir encontrando nombres, cifras o
+términos exactos. Las respuestas muestran el nombre del PDF y el rango de
+páginas de los fragmentos usados.
+
+El servicio de embeddings es independiente del modelo generativo. La
+configuración predeterminada usa Ollama con `embeddinggemma`, un modelo
+multilingüe adecuado para preguntas en español. Debes descargarlo una vez:
+
+```bash
+ollama pull embeddinggemma
+```
+
+También se puede usar un servidor vLLM separado que exponga
+`/v1/embeddings`; en ese caso configura `EMBEDDING_PROVIDER=vllm`, su URL y el
+modelo de embeddings. El vLLM que sirve `Qwen/Qwen3.5-0.8B` para chat no se
+convierte automáticamente en un modelo de embeddings.
 
 ### CAG
 
 CAG (Cache-Augmented Generation) prepara y mantiene en memoria el contexto de
-los PDF seleccionados para reutilizarlo en preguntas posteriores. Es adecuado
-para uno o pocos documentos pequeños. El límite de contexto evita enviar más
-texto del que puede manejar razonablemente la configuración actual de vLLM.
-Esta implementación es una caché de contexto del gateway; no pretende ser una
-KV cache persistente dentro de la VRAM de vLLM.
+los PDF seleccionados para reutilizarlo en preguntas posteriores. Si el
+contexto completo cabe en el límite, conserva el comportamiento CAG original y
+no necesita volver a consultar el embedding en cada pregunta. Si los PDF
+superan ese límite, usa el mismo índice híbrido semántico/léxico para construir
+una ventana relevante y la cachea por pregunta. Esta implementación es una
+caché de contexto del gateway; no pretende ser una KV cache persistente dentro
+de la VRAM de vLLM.
 
 ### Límites y alcance actual
 
@@ -66,9 +81,9 @@ KV cache persistente dentro de la VRAM de vLLM.
 - El índice se pierde al reiniciar el gateway o el proceso Worker. Hay un
   espacio independiente por navegador para que dos usuarios del túnel no
   mezclen sus bibliotecas por accidente.
-- La primera versión usa coincidencia léxica, no búsqueda vectorial. Para una
-  evolución con muchos documentos conviene conservar estas interfaces y
-  reemplazar el almacén temporal por D1/R2 más un índice vectorial.
+- Los embeddings y los PDF se mantienen en memoria y se pierden al reiniciar el
+  gateway. Para una evolución con muchos documentos conviene reemplazar el
+  almacén temporal por D1/R2 más un índice vectorial persistente.
 
 Los límites se pueden ajustar en `.env.local`; las variables disponibles están
 documentadas en `.env.example`.
@@ -102,12 +117,46 @@ LLM_MODEL=llama3.2:1b-instruct-fp16
 
 Si tu modelo tiene otro tag, cambia únicamente `LLM_MODEL`.
 
+### Configurar embeddings
+
+Con el `.env.example` predeterminado, el modelo generativo puede seguir en
+vLLM y los embeddings se generan mediante Ollama:
+
+```dotenv
+LLM_PROVIDER=vllm
+LLM_BASE_URL=http://127.0.0.1:8000
+EMBEDDING_PROVIDER=ollama
+EMBEDDING_BASE_URL=http://127.0.0.1:11434
+EMBEDDING_MODEL=embeddinggemma
+```
+
+Si usas Ollama para ambos servicios, deja `LLM_PROVIDER=ollama` y conserva la
+misma configuración de embeddings. Si prefieres vLLM para ambos, levanta un
+servidor de embeddings independiente y usa, por ejemplo:
+
+```dotenv
+EMBEDDING_PROVIDER=vllm
+EMBEDDING_BASE_URL=http://127.0.0.1:8001
+EMBEDDING_MODEL=intfloat/multilingual-e5-small
+EMBEDDING_QUERY_PREFIX="query: "
+EMBEDDING_DOCUMENT_PREFIX="passage: "
+```
+
+El modelo usado para indexar debe ser exactamente el mismo que se usa para
+consultar. Si solo quieres conservar el recuperador léxico, define
+`EMBEDDING_ENABLED=false`.
+
 ## Servidores locales con Docker
 
 El archivo `docker-compose.yml` incluye vLLM 0.24.0 y Ollama. Ambos servicios
 quedan publicados solamente en `127.0.0.1`; el navegador y el túnel deben
 conectarse al gateway en el puerto `3000`, no directamente al puerto `8000` ni
-al `11434`.
+al `11434`. Para habilitar los embeddings predeterminados descarga el modelo
+en el contenedor una vez:
+
+```bash
+docker compose exec ollama ollama pull embeddinggemma
+```
 
 El perfil predeterminado usa `Qwen/Qwen3.5-0.8B` en modo solo texto. Para la
 RTX 3060 Laptop de 6 GB se reservan como máximo aproximadamente el 60 % de la
@@ -290,6 +339,17 @@ Después, `npm run tunnel` puede apuntar al mismo puerto `3000`.
 | `LLM_MAX_TOKENS` | Límite de tokens generados. |
 | `LLM_TEMPERATURE` | Temperatura común a ambos adaptadores. |
 | `LLM_TIMEOUT_MS` | Tiempo máximo de espera de una respuesta. |
+| `EMBEDDING_ENABLED` | Activa o desactiva la generación semántica. |
+| `EMBEDDING_PROVIDER` | `ollama` o `vllm` para el servicio de embeddings. |
+| `EMBEDDING_BASE_URL` | URL raíz del servicio de embeddings. |
+| `EMBEDDING_MODEL` | Modelo usado para indexar y consultar. |
+| `EMBEDDING_API_KEY` | Clave opcional del servicio de embeddings. |
+| `EMBEDDING_BATCH_SIZE` | Cantidad de fragmentos enviados por lote al indexar. |
+| `EMBEDDING_TIMEOUT_MS` | Tiempo máximo de cada lote de embeddings. |
+| `EMBEDDING_QUERY_PREFIX` | Prefijo opcional para embeddings de preguntas. |
+| `EMBEDDING_DOCUMENT_PREFIX` | Prefijo opcional para embeddings de fragmentos. |
+| `RAG_SEMANTIC_WEIGHT` | Peso porcentual de la similitud semántica; por defecto 70. |
+| `RAG_LEXICAL_WEIGHT` | Peso porcentual de la coincidencia léxica; por defecto 30. |
 | `APP_TOKEN` | Protege `/api/chat` y `/api/health`; recomendado con túnel. |
 | `NEXT_PUBLIC_GATEWAY_URL` | URL pública del gateway para la interfaz desplegada en Vercel. |
 | `APP_CORS_ORIGIN` | Origen de Vercel autorizado para llamar al gateway. |
@@ -297,8 +357,8 @@ Después, `npm run tunnel` puede apuntar al mismo puerto `3000`.
 
 ## Endpoints internos
 
-- `GET /api/config`: devuelve proveedor, modelo y si se requiere token; nunca
-  devuelve la URL privada ni las claves.
+- `GET /api/config`: devuelve proveedor, modelo y estado/modelo de embeddings;
+  nunca devuelve las URL privadas ni las claves.
 - `GET /api/health`: comprueba el proveedor configurado.
 - `POST /api/chat`: recibe `{ "message": "...", "history": [] }` y devuelve
   `{ "message": "..." }`.

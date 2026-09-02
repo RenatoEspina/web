@@ -7,8 +7,14 @@ export function withKnowledge(
   context: KnowledgeContext,
 ): ChatMessage[] {
   const strategy = context.mode === "rag"
-    ? "Se recuperaron fragmentos relevantes mediante RAG."
-    : "Se cargó el contexto disponible mediante CAG.";
+    ? context.embeddingUsed
+      ? "Se recuperaron fragmentos relevantes mediante RAG híbrido, combinando similitud semántica y coincidencia léxica."
+      : "Se recuperaron fragmentos relevantes mediante RAG léxico."
+    : context.truncated
+      ? context.embeddingUsed
+        ? "El documento excedía el límite de CAG; se cargó una selección acotada de fragmentos mediante similitud semántica y caché."
+        : "El documento excedía el límite de CAG; se cargó una selección acotada de fragmentos mediante coincidencia léxica y caché."
+      : "Se cargó y se mantuvo en caché el contexto completo mediante CAG.";
 
   const contextText = context.text || "No se encontró texto relevante en los documentos seleccionados.";
   const systemContent = [
