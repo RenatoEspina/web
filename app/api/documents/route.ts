@@ -1,4 +1,4 @@
-import { addDocument, indexPdf, listDocuments, removeDocument } from "@/lib/documents";
+import { addDocument, getDocumentConfig, indexPdf, listDocuments, removeDocument } from "@/lib/documents";
 import { getAppToken } from "@/lib/llm/config";
 
 export const dynamic = "force-dynamic";
@@ -54,6 +54,10 @@ export async function POST(request: Request) {
   const isPdf = value.type === "application/pdf" || value.name.toLocaleLowerCase().endsWith(".pdf");
   if (!isPdf) return errorResponse("Solo se admiten archivos PDF.", 415);
   if (value.size === 0) return errorResponse("El archivo PDF está vacío.", 400);
+  const maxPdfBytes = getDocumentConfig().maxPdfBytes;
+  if (value.size > maxPdfBytes) {
+    return errorResponse(`El PDF supera el límite de ${Math.round(maxPdfBytes / 1024 / 1024)} MB.`, 413);
+  }
 
   try {
     const document = await indexPdf(new Uint8Array(await value.arrayBuffer()), value.name, value.size);
