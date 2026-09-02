@@ -135,3 +135,94 @@ test("RAG combina embeddings con búsqueda léxica", async () => {
     else process.env.EMBEDDING_MODEL = previousEmbeddingEnvironment.model;
   }
 });
+
+test("desactivar embeddings tolera un proveedor inválido", async () => {
+  const { getEmbeddingConfig, publicEmbeddingConfig } = await vite.ssrLoadModule("/lib/embeddings/config.ts");
+  const previousEmbeddingEnvironment = {
+    enabled: process.env.EMBEDDING_ENABLED,
+    provider: process.env.EMBEDDING_PROVIDER,
+    model: process.env.EMBEDDING_MODEL,
+  };
+
+  process.env.EMBEDDING_ENABLED = "false";
+  process.env.EMBEDDING_PROVIDER = "proveedor-inexistente";
+  delete process.env.EMBEDDING_MODEL;
+
+  try {
+    const config = getEmbeddingConfig();
+    assert.equal(config.enabled, false);
+    assert.equal(config.provider, "ollama");
+    assert.deepEqual(publicEmbeddingConfig(), {
+      enabled: false,
+      provider: "ollama",
+      model: "embeddinggemma",
+    });
+  } finally {
+    if (previousEmbeddingEnvironment.enabled === undefined) delete process.env.EMBEDDING_ENABLED;
+    else process.env.EMBEDDING_ENABLED = previousEmbeddingEnvironment.enabled;
+    if (previousEmbeddingEnvironment.provider === undefined) delete process.env.EMBEDDING_PROVIDER;
+    else process.env.EMBEDDING_PROVIDER = previousEmbeddingEnvironment.provider;
+    if (previousEmbeddingEnvironment.model === undefined) delete process.env.EMBEDDING_MODEL;
+    else process.env.EMBEDDING_MODEL = previousEmbeddingEnvironment.model;
+  }
+});
+
+test("RAG conserva el fallback léxico si la configuración semántica es inválida", async () => {
+  const { addDocument } = await vite.ssrLoadModule("/lib/documents/store.ts");
+  const { buildKnowledgeContext } = await vite.ssrLoadModule("/lib/documents/retrieval.ts");
+  const workspaceId = crypto.randomUUID();
+  const documentId = crypto.randomUUID();
+  const previousEmbeddingEnvironment = {
+    enabled: process.env.EMBEDDING_ENABLED,
+    provider: process.env.EMBEDDING_PROVIDER,
+  };
+  const originalFetch = globalThis.fetch;
+
+  process.env.EMBEDDING_ENABLED = "true";
+  process.env.EMBEDDING_PROVIDER = "proveedor-inexistente";
+  globalThis.fetch = async () => {
+    throw new Error("No se debe consultar un proveedor con configuración inválida.");
+  };
+
+  try {
+    addDocument(workspaceId, {
+      id: documentId,
+      name: "fallback.pdf",
+      sizeBytes: 500,
+      pages: 1,
+      characters: 100,
+      createdAt: Date.now(),
+      chunks: [
+        {
+          id: `${documentId}-0`,
+          documentId,
+          documentName: "fallback.pdf",
+          page: 1,
+          index: 0,
+          text: "La bicicleta necesita mantenimiento periódico.",
+          embedding: [1, 0],
+        },
+        {
+          id: `${documentId}-1`,
+          documentId,
+          documentName: "fallback.pdf",
+          page: 1,
+          index: 1,
+          text: "El felino doméstico duerme durante la tarde.",
+          embedding: [0, 1],
+        },
+      ],
+    });
+
+    const rag = await buildKnowledgeContext(workspaceId, "rag", "¿Cómo mantener la bicicleta?", [documentId]);
+    assert.equal(rag?.embeddingUsed, false);
+    assert.equal(rag?.sources[0]?.chunkId, `${documentId}-0`);
+    assert.match(rag?.text ?? "", /bicicleta/);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (previousEmbeddingEnvironment.enabled === undefined) delete process.env.EMBEDDING_ENABLED;
+    else process.env.EMBEDDING_ENABLED = previousEmbeddingEnvironment.enabled;
+    if (previousEmbeddingEnvironment.provider === undefined) delete process.env.EMBEDDING_PROVIDER;
+    else process.env.EMBEDDING_PROVIDER = previousEmbeddingEnvironment.provider;
+  }
+});
