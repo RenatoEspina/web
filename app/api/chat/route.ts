@@ -1,7 +1,7 @@
 import { buildKnowledgeContext, type KnowledgeMode } from "@/lib/documents";
 import { withKnowledge } from "@/lib/documents/prompt";
 import { complete } from "@/lib/llm";
-import { getAppToken, getLlmConfig } from "@/lib/llm/config";
+import { getAllowedModels, getAppToken, getLlmConfig } from "@/lib/llm/config";
 import type { ChatMessage, ChatRole } from "@/lib/llm/types";
 
 export const dynamic = "force-dynamic";
@@ -71,9 +71,9 @@ export async function POST(request: Request) {
     return Response.json({ error: "Se requiere una clave de acceso." }, { status: 401 });
   }
 
-  let body: { message?: unknown; history?: unknown; mode?: unknown; documentIds?: unknown };
+  let body: { message?: unknown; history?: unknown; mode?: unknown; documentIds?: unknown; model?: unknown };
   try {
-    body = (await request.json()) as { message?: unknown; history?: unknown; mode?: unknown; documentIds?: unknown };
+    body = (await request.json()) as { message?: unknown; history?: unknown; mode?: unknown; documentIds?: unknown; model?: unknown };
   } catch {
     return Response.json({ error: "El cuerpo de la petición no es JSON válido." }, { status: 400 });
   }
@@ -87,6 +87,10 @@ export async function POST(request: Request) {
   }
 
   const mode = knowledgeMode(body.mode);
+  const model = typeof body.model === "string" ? body.model.trim() : "";
+  if (model && !getAllowedModels().includes(model)) {
+    return Response.json({ error: "El modelo o adaptador solicitado no está habilitado." }, { status: 400 });
+  }
   const selectedDocumentIds = documentIds(body.documentIds);
   const workspaceId = request.headers.get("x-workspace-id")?.trim() ?? "";
   if (mode !== "none" && !WORKSPACE_ID_PATTERN.test(workspaceId)) {
@@ -108,10 +112,12 @@ export async function POST(request: Request) {
       ? null
       : await buildKnowledgeContext(workspaceId, mode, message, selectedDocumentIds);
     const requestMessages = knowledge ? withKnowledge(messages, knowledge) : messages;
-    const answer = await complete(requestMessages, AbortSignal.timeout(config.timeoutMs));
+    const selectedModel = model || config.model;
+    const answer = await complete(requestMessages, AbortSignal.timeout(config.timeoutMs), selectedModel);
     return Response.json({
       message: answer,
       provider: config.provider,
+      model: selectedModel,
       mode,
       sources: knowledge?.sources ?? [],
       cacheHit: knowledge?.cacheHit ?? false,
