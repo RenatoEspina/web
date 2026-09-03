@@ -88,6 +88,15 @@ no necesita volver a consultar el embedding en cada pregunta. Si los PDF superan
 Los límites se pueden ajustar en `.env.local`; las variables disponibles están
 documentadas en `.env.example`.
 
+## Fine-tuning LoRA/QLoRA
+
+El proyecto incluye un entrenador independiente en `trainer/`, una pantalla de
+preparación en `/fine-tune`, validación de datasets conversacionales y selección
+segura de adaptadores cargados por vLLM. La guía completa, incluyendo evaluación
+base contra LoRA, está en [`docs/FINE_TUNING.md`](docs/FINE_TUNING.md). La ruta
+de evolución hacia el sistema multiagente está en
+[`docs/SCALING_MULTI_AGENT.md`](docs/SCALING_MULTI_AGENT.md).
+
 ## Ejecución local
 
 Desde la raíz del proyecto:
@@ -335,6 +344,7 @@ Después, `npm run tunnel` puede apuntar al mismo puerto `3000`.
 | `LLM_PROVIDER` | `vllm` u `ollama`. |
 | `LLM_BASE_URL` | URL raíz privada del proveedor. |
 | `LLM_MODEL` | Nombre del modelo enviado al proveedor. |
+| `LLM_ADAPTER_MODELS` | Lista permitida de adaptadores vLLM, separada por comas. |
 | `LLM_API_KEY` | Clave opcional para vLLM/OpenAI-compatible. |
 | `LLM_MAX_TOKENS` | Límite de tokens generados. |
 | `LLM_TEMPERATURE` | Temperatura común a ambos adaptadores. |

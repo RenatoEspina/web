@@ -7,6 +7,7 @@ import {
   CircleCheck,
   FileText,
   FileUp,
+  FlaskConical,
   KeyRound,
   LoaderCircle,
   Plus,
@@ -15,6 +16,7 @@ import {
   Trash2,
   WifiOff,
 } from "lucide-react";
+import Link from "next/link";
 import { useEffect, useRef, useState, type ChangeEvent, type FormEvent, type KeyboardEvent } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -50,6 +52,7 @@ type GatewayConfig = {
   provider: "vllm" | "ollama";
   model: string;
   authRequired: boolean;
+  models: string[];
   embedding: {
     enabled: boolean;
     provider: "vllm" | "ollama";
@@ -135,6 +138,7 @@ export default function Home() {
   const [documents, setDocuments] = useState<DocumentSummary[]>([]);
   const [selectedDocumentIds, setSelectedDocumentIds] = useState<string[]>([]);
   const [knowledgeMode, setKnowledgeMode] = useState<KnowledgeMode>("rag");
+  const [selectedModel, setSelectedModel] = useState("");
   const [authToken, setAuthToken] = useState("");
   const [tokenDraft, setTokenDraft] = useState("");
   const [showTokenDialog, setShowTokenDialog] = useState(false);
@@ -201,6 +205,7 @@ export default function Home() {
           provider: data.provider,
           model: typeof data.model === "string" ? data.model : "modelo configurado",
           authRequired: data.authRequired === true,
+          models: Array.isArray(data.models) ? data.models.filter((model): model is string => typeof model === "string") : [typeof data.model === "string" ? data.model : "modelo configurado"],
           embedding: data.embedding && typeof data.embedding === "object"
             ? {
               enabled: (data.embedding as Record<string, unknown>).enabled !== false,
@@ -212,6 +217,7 @@ export default function Home() {
             : { enabled: true, provider: "ollama", model: "modelo de embeddings" },
         };
         setConfig(nextConfig);
+        setSelectedModel(nextConfig.model);
 
         if (nextConfig.authRequired && !storedToken) {
           setStatus("locked");
@@ -257,6 +263,7 @@ export default function Home() {
           history: previousMessages,
           mode: knowledgeMode,
           documentIds: selectedDocumentIds,
+          model: selectedModel || config?.model,
         }),
       });
       const data = await responseData(response);
@@ -478,6 +485,8 @@ export default function Home() {
           <span className="meta-separator">/</span>
           <span className="model-name" title={config?.model}>{config?.model ?? "cargando configuración"}</span>
           <span className="meta-spacer" />
+          {config && config.models.length > 1 && <Select value={selectedModel} onValueChange={setSelectedModel}><SelectTrigger className="knowledge-select" aria-label="Modelo o adaptador"><SelectValue /></SelectTrigger><SelectContent>{config.models.map((model) => <SelectItem value={model} key={model}>{model}</SelectItem>)}</SelectContent></Select>}
+          <Link href="/fine-tune" className="token-link"><FlaskConical size={13} /> Fine-tuning</Link>
           <span className="secure-label"><ShieldCheck size={14} /> PDF en memoria · embeddings {config?.embedding.enabled ? "activos" : "desactivados"}</span>
         </div>
 
