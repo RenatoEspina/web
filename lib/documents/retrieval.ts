@@ -109,6 +109,26 @@ function rankNormalizedScores(scores: Array<number | undefined>): Array<number |
   return normalized;
 }
 
+function rankPositions(
+  scores: Array<number | undefined>,
+  include: (score: number) => boolean,
+): Array<number | undefined> {
+  const rankedIndexes = scores
+    .map((score, index) => ({ score, index }))
+    .filter((item): item is { score: number; index: number } => (
+      item.score !== undefined && include(item.score)
+    ))
+    .sort((left, right) => right.score - left.score || left.index - right.index);
+
+  const ranks = scores.map(() => undefined as number | undefined);
+  rankedIndexes.forEach((item, index) => {
+    ranks[item.index] = index + 1;
+  });
+  return ranks;
+}
+
+const RRF_K = 60;
+
 async function rankChunks(query: string, chunks: DocumentChunk[]): Promise<RankedChunks> {
   if (chunks.length === 0) return { ranked: [], embeddingUsed: false };
 
@@ -133,35 +153,31 @@ async function rankChunks(query: string, chunks: DocumentChunk[]): Promise<Ranke
     }
   }
 
-  // Se combinan posiciones relativas, no magnitudes absolutas. Esto evita
-  // amplificar pequeñas diferencias de cosine similarity y permite que la
-  // semántica supere a un distractor con muchas palabras coincidentes.
-  const semanticRank = rankNormalizedScores(semanticScores).map((score) => score ?? 0);
-  const lexicalRank = rankNormalizedScores(lexicalScores).map((score) => score ?? 0);
   const config = getDocumentConfig();
   const weightTotal = config.semanticWeight + config.lexicalWeight;
   const semanticWeight = weightTotal > 0 ? config.semanticWeight / weightTotal : 0.7;
   const lexicalWeight = weightTotal > 0 ? config.lexicalWeight / weightTotal : 0.3;
+  const semanticRanks = rankPositions(semanticScores, () => true);
+  const lexicalRanks = rankPositions(lexicalScores, (score) => score > 0);
 
   const ranked = chunks
     .map((chunk, index) => {
-      const hasSemanticScore = semanticScores[index] !== undefined;
-      const score = embeddingUsed
-        ? (hasSemanticScore
-          ? semanticWeight * semanticRank[index] + lexicalWeight * lexicalRank[index]
-          : lexicalWeight * lexicalRank[index])
-        : lexicalScores[index];
+      const fusedScore = (semanticRanks[index] !== undefined
+        ? semanticWeight / (RRF_K + (semanticRanks[index] ?? RRF_K))
+        : 0)
+        + (lexicalRanks[index] !== undefined
+          ? lexicalWeight / (RRF_K + (lexicalRanks[index] ?? RRF_K))
+          : 0);
 
       return {
         chunk,
-        score,
+        // RRF fusiona rankings heterogéneos sin asumir que cosine y TF-IDF
+        // comparten escala o significado.
+        score: embeddingUsed ? fusedScore : lexicalScores[index],
         lexicalScore: lexicalScores[index],
         ...(semanticScores[index] === undefined ? {} : { semanticScore: semanticScores[index] }),
       };
     })
-    // Con embeddings, conservar todos los candidatos permite que un
-    // fragmento semánticamente relevante sin coincidencias exactas llegue
-    // a topK. Sin embeddings se mantiene el filtro léxico original.
     .filter((result) => embeddingUsed || result.score > 0)
     .sort((left, right) => (
       right.score - left.score ||
@@ -172,7 +188,6 @@ async function rankChunks(query: string, chunks: DocumentChunk[]): Promise<Ranke
 
   return { ranked, embeddingUsed };
 }
-
 function sourceFor(chunk: DocumentChunk, result?: RankedChunk): KnowledgeSource {
   return {
     documentId: chunk.documentId,

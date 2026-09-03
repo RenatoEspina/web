@@ -42,8 +42,7 @@ chat      → POST /api/chat      → RAG/CAG → contexto → vLLM u Ollama
 ### RAG
 
 RAG (Retrieval-Augmented Generation) genera un embedding por fragmento al
-cargar el PDF y otro por cada pregunta. Después combina similitud coseno
-semántica con coincidencia léxica tipo TF-IDF. Así puede recuperar una idea
+cargar el PDF y otro por cada pregunta. Después combina las posiciones de la similitud semántica y de la coincidencia léxica tipo TF-IDF mediante Reciprocal Rank Fusion (RRF), evitando mezclar directamente escalas incompatibles. Así puede recuperar una idea
 expresada con palabras distintas y seguir encontrando nombres, cifras o
 términos exactos. Las respuestas muestran el nombre del PDF y el rango de
 páginas de los fragmentos usados.

@@ -126,6 +126,7 @@ test("RAG combina embeddings con búsqueda léxica", async () => {
     assert.equal(rag?.embeddingUsed, true);
     assert.equal(rag?.sources[0]?.chunkId, `${documentId}-1`);
     assert.match(rag?.text ?? "", /bicicleta/);
+    assert.equal(rag?.sources[0]?.semanticScore, 1);
   } finally {
     globalThis.fetch = originalFetch;
     if (previousEmbeddingEnvironment.enabled === undefined) delete process.env.EMBEDDING_ENABLED;
