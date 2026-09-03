@@ -89,26 +89,6 @@ function cosineSimilarity(left: number[], right: number[]): number | null {
   return dot / (Math.sqrt(leftNorm) * Math.sqrt(rightNorm));
 }
 
-function rankNormalizedScores(scores: Array<number | undefined>): Array<number | undefined> {
-  const rankedIndexes = scores
-    .map((score, index) => ({ score, index }))
-    .filter((item): item is { score: number; index: number } => item.score !== undefined)
-    .sort((left, right) => right.score - left.score || left.index - right.index);
-
-  if (rankedIndexes.length === 0) return scores.map(() => undefined);
-  if (rankedIndexes.length === 1) {
-    return scores.map((score) => score === undefined ? undefined : 1);
-  }
-
-  const normalized = scores.map(() => undefined as number | undefined);
-  rankedIndexes.forEach((item, rank) => {
-    // Nunca devolver cero: el candidato semántico más bajo debe poder
-    // llegar a topK si no existen coincidencias léxicas.
-    normalized[item.index] = 1 - rank / rankedIndexes.length;
-  });
-  return normalized;
-}
-
 function rankPositions(
   scores: Array<number | undefined>,
   include: (score: number) => boolean,
