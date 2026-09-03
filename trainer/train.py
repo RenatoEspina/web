@@ -8,6 +8,7 @@ from datasets import Dataset
 from peft import LoraConfig, prepare_model_for_kbit_training
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 from trl import SFTConfig, SFTTrainer
+from dataset_validation import load_jsonl
 
 SAFE_NAME = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$")
 
@@ -28,19 +29,6 @@ def arguments() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=42)
     return parser.parse_args()
 
-def load_jsonl(path: Path) -> list[dict]:
-    examples: list[dict] = []
-    with path.open("r", encoding="utf-8") as source:
-        for number, line in enumerate(source, 1):
-            if not line.strip(): continue
-            value = json.loads(line)
-            messages = value.get("messages") if isinstance(value, dict) else None
-            if not isinstance(messages, list) or len(messages) < 2: raise ValueError(f"Línea {number}: messages inválido")
-            if messages[-1].get("role") != "assistant": raise ValueError(f"Línea {number}: el último mensaje debe ser assistant")
-            examples.append({"messages": messages})
-    if not examples: raise ValueError("El dataset está vacío")
-    return examples
-
 def main() -> None:
     args = arguments()
     if not SAFE_NAME.fullmatch(args.name): raise ValueError("--name contiene caracteres no permitidos")
@@ -48,7 +36,7 @@ def main() -> None:
     destination = (args.output_root / args.name).resolve()
     if destination.exists() and any(destination.iterdir()): raise FileExistsError(f"El adaptador ya existe: {destination}")
     destination.mkdir(parents=True, exist_ok=True)
-    examples = load_jsonl(args.dataset)
+    examples, _ = load_jsonl(args.dataset)
     tokenizer = AutoTokenizer.from_pretrained(args.model, trust_remote_code=False)
     if tokenizer.pad_token is None: tokenizer.pad_token = tokenizer.eos_token
     dataset = Dataset.from_list(examples).map(lambda example: {"text": tokenizer.apply_chat_template(example["messages"], tokenize=False, add_generation_prompt=False)}, remove_columns=["messages"])

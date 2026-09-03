@@ -6,8 +6,8 @@ import type { ChatMessage, LlmProvider } from "./types";
 export function getProvider(model?: string): LlmProvider {
   const config = getLlmConfig();
   const selectedModel = model?.trim() || config.model;
-  if (!getAllowedModels().includes(selectedModel)) {
-    throw new Error("Requested model is not allowed.");
+  if (!getAllowedModels(config.model).includes(selectedModel)) {
+    throw new Error("El modelo o adaptador solicitado no está habilitado.");
   }
   const selectedConfig = { ...config, model: selectedModel };
   return config.provider === "ollama"

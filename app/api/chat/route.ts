@@ -88,7 +88,16 @@ export async function POST(request: Request) {
 
   const mode = knowledgeMode(body.mode);
   const model = typeof body.model === "string" ? body.model.trim() : "";
-  if (model && !getAllowedModels().includes(model)) {
+  let config: ReturnType<typeof getLlmConfig>;
+  let allowedModels: string[];
+  try {
+    config = getLlmConfig();
+    allowedModels = getAllowedModels(config.model);
+  } catch (error) {
+    console.error("[llm-bridge] Invalid LLM configuration", error);
+    return Response.json({ error: "La configuración del proveedor no es válida." }, { status: 500 });
+  }
+  if (model && !allowedModels.includes(model)) {
     return Response.json({ error: "El modelo o adaptador solicitado no está habilitado." }, { status: 400 });
   }
   const selectedDocumentIds = documentIds(body.documentIds);
@@ -107,7 +116,6 @@ export async function POST(request: Request) {
   ];
 
   try {
-    const config = getLlmConfig();
     const knowledge = mode === "none"
       ? null
       : await buildKnowledgeContext(workspaceId, mode, message, selectedDocumentIds);
