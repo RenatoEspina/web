@@ -49,11 +49,11 @@ términos exactos. Las respuestas muestran el nombre del PDF y el rango de
 páginas de los fragmentos usados.
 
 El servicio de embeddings es independiente del modelo generativo. La
-configuración predeterminada usa Ollama con `embeddinggemma`, un modelo
+configuración predeterminada usa Ollama con `qwen3-embedding:4b`, un modelo
 multilingüe adecuado para preguntas en español. Debes descargarlo una vez:
 
 ```bash
-ollama pull embeddinggemma
+ollama pull qwen3-embedding:4b
 ```
 
 También se puede usar un servidor vLLM separado que exponga
@@ -71,11 +71,7 @@ valor obsoleto o inválido en `EMBEDDING_PROVIDER`.
 CAG (Cache-Augmented Generation) prepara y mantiene en memoria el contexto de
 los PDF seleccionados para reutilizarlo en preguntas posteriores. Si el
 contexto completo cabe en el límite, conserva el comportamiento CAG original y
-no necesita volver a consultar el embedding en cada pregunta. Si los PDF
-superan ese límite, usa el mismo índice híbrido semántico/léxico para construir
-una ventana relevante y la cachea por pregunta. Esta implementación es una
-caché de contexto del gateway; no pretende ser una KV cache persistente dentro
-de la VRAM de vLLM.
+no necesita volver a consultar el embedding en cada pregunta. Si los PDF superan ese límite, CAG mantiene el orden documental y marca el contexto como truncado; no convierte silenciosamente la operación en RAG. Para recuperar selectivamente una ventana relevante se debe usar RAG. La caché de contexto del gateway se combina con la caché automática de prefijos de vLLM, que permite reutilizar el prefijo documental estable entre preguntas.
 
 ### Límites y alcance actual
 
@@ -132,7 +128,7 @@ LLM_PROVIDER=vllm
 LLM_BASE_URL=http://127.0.0.1:8000
 EMBEDDING_PROVIDER=ollama
 EMBEDDING_BASE_URL=http://127.0.0.1:11434
-EMBEDDING_MODEL=embeddinggemma
+EMBEDDING_MODEL=qwen3-embedding:4b
 ```
 
 Si usas Ollama para ambos servicios, deja `LLM_PROVIDER=ollama` y conserva la
@@ -160,7 +156,7 @@ al `11434`. Para habilitar los embeddings predeterminados descarga el modelo
 en el contenedor una vez:
 
 ```bash
-docker compose exec ollama ollama pull embeddinggemma
+docker compose exec ollama ollama pull qwen3-embedding:4b
 ```
 
 El perfil predeterminado usa `Qwen/Qwen3.5-0.8B` en modo solo texto. Para la
@@ -172,7 +168,7 @@ porque esta interfaz únicamente envía y recibe texto. También se fija
 `enable_thinking=false` para que la respuesta visible no pierda tokens en un
 bloque de razonamiento interno.
 
-El script `comandos.fish` evita que vLLM y Ollama ocupen la GPU al mismo tiempo:
+El script `comandos.fish` inicia Ollama para embeddings con `qwen3-embedding:4b` y la configuración de Compose fuerza Ollama a CPU para reservar la GPU a vLLM:
 
 ```bash
 chmod +x comandos.fish
