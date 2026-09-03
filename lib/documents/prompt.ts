@@ -11,11 +11,8 @@ export function withKnowledge(
       ? "Se recuperaron fragmentos relevantes mediante RAG híbrido, combinando similitud semántica y coincidencia léxica."
       : "Se recuperaron fragmentos relevantes mediante RAG léxico."
     : context.truncated
-      ? context.embeddingUsed
-        ? "El documento excedía el límite de CAG; se cargó una selección acotada de fragmentos mediante similitud semántica y caché."
-        : "El documento excedía el límite de CAG; se cargó una selección acotada de fragmentos mediante coincidencia léxica y caché."
-      : "Se cargó y se mantuvo en caché el contexto completo mediante CAG.";
-
+      ? "Se cargó el contexto CAG en orden documental, pero fue truncado por el límite configurado; para recuperar selectivamente usa RAG."
+      : "Se cargó el contexto documental completo mediante CAG y se mantuvo estable para reutilizar su prefijo.";
   const contextText = context.text || "No se encontró texto relevante en los documentos seleccionados.";
   const systemContent = [
     "Responde en el idioma de la pregunta y sé preciso.",

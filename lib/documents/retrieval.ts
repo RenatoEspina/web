@@ -236,13 +236,12 @@ async function buildRag(workspaceId: string, query: string, ids?: string[]): Pro
   };
 }
 
-async function buildCag(workspaceId: string, query: string, ids?: string[]): Promise<KnowledgeContext> {
+async function buildCag(workspaceId: string, _query: string, ids?: string[]): Promise<KnowledgeContext> {
   const config = getDocumentConfig();
   const documents = selectedDocuments(workspaceId, ids);
   const allChunks = documents.flatMap((document) => document.chunks);
   const completeContextFits = estimatedContextCharacters(allChunks) <= config.maxCagContextCharacters;
-  const cacheQuery = completeContextFits ? undefined : query;
-  const cached = getCachedCagContext(workspaceId, documents, cacheQuery);
+  const cached = getCachedCagContext(workspaceId, documents);
 
   if (cached) {
     return {
@@ -250,37 +249,27 @@ async function buildCag(workspaceId: string, query: string, ids?: string[]): Pro
       text: cached.text,
       sources: cached.sources,
       cacheHit: true,
-      embeddingUsed: cached.embeddingUsed,
+      embeddingUsed: false,
       truncated: cached.truncated,
     };
   }
 
-  let contextChunks = allChunks;
-  let ranked: RankedChunk[] | undefined;
-  let embeddingUsed = false;
-  const truncated = !completeContextFits;
-
-  if (truncated) {
-    const rankedResult = await rankChunks(query, allChunks);
-    ranked = rankedResult.ranked;
-    embeddingUsed = rankedResult.embeddingUsed;
-    if (ranked.length > 0) contextChunks = ranked.map((result) => result.chunk);
-  }
-
+  // CAG no usa la pregunta para seleccionar fragmentos: conserva un contexto
+  // documental estable para que vLLM pueda reutilizar su prefijo.
   let remaining = config.maxCagContextCharacters;
   const blocks: string[] = [];
   const sources: KnowledgeSource[] = [];
-  const rankedByChunkId = new Map<string, RankedChunk>(
-    ranked?.map((item) => [item.chunk.id, item]) ?? [],
-  );
+  let truncated = !completeContextFits;
 
-  for (const chunk of contextChunks) {
+  for (const chunk of allChunks) {
     if (remaining <= 0) break;
-    const block = contextBlock(chunk).slice(0, remaining);
-    if (!block) continue;
+    const fullBlock = contextBlock(chunk);
+    const block = fullBlock.slice(0, remaining);
+    if (!block) break;
+
     blocks.push(block);
-    const result = rankedByChunkId.get(chunk.id);
-    sources.push(sourceFor(chunk, result));
+    sources.push(sourceFor(chunk));
+    if (block.length < fullBlock.length) truncated = true;
     remaining -= block.length + 2;
   }
 
@@ -288,13 +277,12 @@ async function buildCag(workspaceId: string, query: string, ids?: string[]): Pro
   setCachedCagContext(workspaceId, documents, {
     text,
     sources,
-    embeddingUsed,
+    embeddingUsed: false,
     truncated,
-  }, cacheQuery);
+  });
 
-  return { mode: "cag", text, sources, cacheHit: false, embeddingUsed, truncated };
+  return { mode: "cag", text, sources, cacheHit: false, embeddingUsed: false, truncated };
 }
-
 export async function buildKnowledgeContext(
   workspaceId: string,
   mode: "rag" | "cag",

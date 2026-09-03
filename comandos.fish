@@ -14,7 +14,7 @@ cd "$project_dir"; or exit 1
 
 set -g compose_project "llm-bridge"
 set -g default_ollama_model "llama3.2:1b-instruct-fp16"
-set -g default_embedding_model "embeddinggemma"
+set -g default_embedding_model "qwen3-embedding:4b"
 
 function compose
     docker compose -p $compose_project $argv

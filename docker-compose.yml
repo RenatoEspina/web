@@ -39,6 +39,8 @@ services:
       - --max-num-batched-tokens
       - "${VLLM_MAX_NUM_BATCHED_TOKENS:-2048}"
       - --enforce-eager
+      # Reutiliza el prefijo documental estable del modo CAG.
+      - --enable-prefix-caching
     deploy:
       resources:
         reservations:

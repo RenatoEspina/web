@@ -8,7 +8,7 @@ const DEFAULTS: Record<EmbeddingProviderName, {
 }> = {
   ollama: {
     baseUrl: "http://127.0.0.1:11434",
-    model: "embeddinggemma",
+    model: "qwen3-embedding:4b",
     queryPrefix: "",
     documentPrefix: "",
   },

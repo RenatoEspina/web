@@ -79,10 +79,10 @@ test("RAG combina embeddings con búsqueda léxica", async () => {
 
   process.env.EMBEDDING_ENABLED = "true";
   process.env.EMBEDDING_PROVIDER = "ollama";
-  process.env.EMBEDDING_MODEL = "embeddinggemma";
+  process.env.EMBEDDING_MODEL = "qwen3-embedding:4b";
   globalThis.fetch = async (_input, init) => {
     const body = JSON.parse(String(init?.body));
-    assert.equal(body.model, "embeddinggemma");
+    assert.equal(body.model, "qwen3-embedding:4b");
     return new Response(JSON.stringify({ embeddings: [[0, 1]] }), {
       status: 200,
       headers: { "Content-Type": "application/json" },
@@ -98,7 +98,7 @@ test("RAG combina embeddings con búsqueda léxica", async () => {
       characters: 100,
       createdAt: Date.now(),
       embeddingProvider: "ollama",
-      embeddingModel: "embeddinggemma",
+      embeddingModel: "qwen3-embedding:4b",
       embeddingDimension: 2,
       chunks: [
         {
@@ -151,7 +151,7 @@ test("RAG conserva un candidato semántico sin coincidencias léxicas", async ()
 
   process.env.EMBEDDING_ENABLED = "true";
   process.env.EMBEDDING_PROVIDER = "ollama";
-  process.env.EMBEDDING_MODEL = "embeddinggemma";
+  process.env.EMBEDDING_MODEL = "qwen3-embedding:4b";
 
   globalThis.fetch = async (_input, init) => {
     const body = JSON.parse(String(init?.body));
@@ -170,7 +170,7 @@ test("RAG conserva un candidato semántico sin coincidencias léxicas", async ()
       characters: 180,
       createdAt: Date.now(),
       embeddingProvider: "ollama",
-      embeddingModel: "embeddinggemma",
+      embeddingModel: "qwen3-embedding:4b",
       embeddingDimension: 2,
       chunks: [
         {
@@ -234,7 +234,7 @@ test("desactivar embeddings tolera un proveedor inválido", async () => {
     assert.deepEqual(publicEmbeddingConfig(), {
       enabled: false,
       provider: "ollama",
-      model: "embeddinggemma",
+      model: "qwen3-embedding:4b",
     });
   } finally {
     if (previousEmbeddingEnvironment.enabled === undefined) delete process.env.EMBEDDING_ENABLED;
