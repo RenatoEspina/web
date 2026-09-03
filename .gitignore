@@ -42,3 +42,6 @@ next-env.d.ts
 /.sites-runtime/
 /outputs/
 /work/
+/adapters/
+/trainer/.venv/
+/trainer/__pycache__/
