@@ -15,8 +15,8 @@
     "typecheck": "tsc --noEmit",
     "test": "npm run build && node --test tests/*.test.mjs",
     "lint": "bash scripts/sites-env.sh -- eslint . --ignore-pattern dist --ignore-pattern .next",
-    "db:generate": "bash scripts/sites-env.sh -- drizzle-kit generate"
-    ,"dataset:validate": "python trainer/validate_dataset.py"
+    "db:generate": "bash scripts/sites-env.sh -- drizzle-kit generate",
+    "dataset:validate": "python trainer/validate_dataset.py"
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",

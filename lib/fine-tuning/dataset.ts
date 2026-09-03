@@ -40,8 +40,13 @@ export function parseJsonlDataset(text: string): TrainingExample[] {
 export function validateJsonlDataset(text: string): DatasetValidation {
   try {
     const examples = parseJsonlDataset(text);
-    const messages = examples.flatMap((example) => example.messages);
-    return { valid: true, examples: examples.length, messages: messages.length, characters: messages.reduce((sum, message) => sum + message.content.length, 0), errors: [] };
+    let messages = 0;
+    let characters = 0;
+    for (const example of examples) {
+      messages += example.messages.length;
+      for (const message of example.messages) characters += message.content.length;
+    }
+    return { valid: true, examples: examples.length, messages, characters, errors: [] };
   } catch (error) {
     return { valid: false, examples: 0, messages: 0, characters: 0, errors: [error instanceof Error ? error.message : "Dataset inválido."] };
   }

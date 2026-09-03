@@ -46,8 +46,7 @@ export function getAppToken(): string {
   return readEnv("APP_TOKEN") ?? "";
 }
 
-export function getAllowedModels(): string[] {
-  const baseModel = getLlmConfig().model;
+export function getAllowedModels(baseModel = getLlmConfig().model): string[] {
   const adapters = (readEnv("LLM_ADAPTER_MODELS") ?? "")
     .split(",")
     .map((model) => model.trim())
