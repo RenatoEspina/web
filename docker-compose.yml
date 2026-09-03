@@ -8,6 +8,7 @@ services:
       HUGGING_FACE_HUB_TOKEN: ${HF_TOKEN:-}
     volumes:
       - hf-cache:/root/.cache/huggingface
+      - ./adapters:/adapters:ro
     devices:
       - /dev/nvidia-uvm:/dev/nvidia-uvm
     runtime: nvidia
@@ -41,6 +42,11 @@ services:
       - --enforce-eager
       # Reutiliza el prefijo documental estable del modo CAG.
       - --enable-prefix-caching
+      - --enable-lora
+      - --max-loras
+      - "${VLLM_MAX_LORAS:-2}"
+      - --max-lora-rank
+      - "${VLLM_MAX_LORA_RANK:-32}"
     deploy:
       resources:
         reservations:

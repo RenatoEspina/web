@@ -1,17 +1,22 @@
-import { getLlmConfig } from "./config";
+import { getAllowedModels, getLlmConfig } from "./config";
 import { OllamaProvider } from "./ollama";
 import { OpenAiCompatibleProvider } from "./openai-compatible";
 import type { ChatMessage, LlmProvider } from "./types";
 
-export function getProvider(): LlmProvider {
+export function getProvider(model?: string): LlmProvider {
   const config = getLlmConfig();
+  const selectedModel = model?.trim() || config.model;
+  if (!getAllowedModels().includes(selectedModel)) {
+    throw new Error("Requested model is not allowed.");
+  }
+  const selectedConfig = { ...config, model: selectedModel };
   return config.provider === "ollama"
-    ? new OllamaProvider(config)
-    : new OpenAiCompatibleProvider(config);
+    ? new OllamaProvider(selectedConfig)
+    : new OpenAiCompatibleProvider(selectedConfig);
 }
 
-export async function complete(messages: ChatMessage[], signal: AbortSignal): Promise<string> {
-  return getProvider().complete(messages, signal);
+export async function complete(messages: ChatMessage[], signal: AbortSignal, model?: string): Promise<string> {
+  return getProvider(model).complete(messages, signal);
 }
 
 export async function checkProvider(signal: AbortSignal) {

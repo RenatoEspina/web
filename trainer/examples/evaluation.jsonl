@@ -1,0 +1,2 @@
+{"messages":[{"role":"user","content":"¿Qué tipo se usa para enteros en una colección genérica de Java?"}],"contains":["Integer"]}
+{"messages":[{"role":"user","content":"Escribe una consulta SQL que cuente usuarios por nombre."}],"contains":["COUNT", "GROUP BY"]}

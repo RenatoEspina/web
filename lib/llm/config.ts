@@ -46,12 +46,22 @@ export function getAppToken(): string {
   return readEnv("APP_TOKEN") ?? "";
 }
 
+export function getAllowedModels(): string[] {
+  const baseModel = getLlmConfig().model;
+  const adapters = (readEnv("LLM_ADAPTER_MODELS") ?? "")
+    .split(",")
+    .map((model) => model.trim())
+    .filter((model) => /^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/.test(model));
+  return [...new Set([baseModel, ...adapters])];
+}
+
 export function publicLlmConfig() {
   const config = getLlmConfig();
   return {
     provider: config.provider,
     model: config.model,
     authRequired: Boolean(getAppToken()),
+    models: getAllowedModels(),
   };
 }
 
