@@ -211,7 +211,7 @@ function fine_tune_list
             continue
         end
         set found true
-        set -l adapter_dir (path dirname (path dirname "$manifest"))
+        set -l adapter_dir (path dirname "$manifest")
         set -l adapter_name (path basename "$adapter_dir")
         set -l summary ("$python_command" -c 'import json,sys; m=json.load(open(sys.argv[1], encoding="utf-8")); p=m.get("parameters",{}); print("base={} | ejemplos={} | rank={} | creado={}".format(m.get("baseModel","?"),m.get("examples","?"),p.get("rank","?"),m.get("createdAt","?")))' "$manifest" 2>/dev/null)
         if test (count $summary) -eq 0
