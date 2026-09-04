@@ -150,6 +150,7 @@ function fine_tune_train
     set -l adapter_name "$argv[2]"
     set -l extra_args $argv[3..-1]
     set -lx FINE_TUNE_PYTHON (trainer_python)
+    set -lx COMPOSE_PROJECT_NAME $compose_project
     echo "Dataset validado. Iniciando entrenamiento de '$adapter_name'..."
     bash scripts/train-adapter.sh "$dataset" "$adapter_name" $extra_args; or fail \
         "El entrenamiento terminó con error. Revisa el log anterior."

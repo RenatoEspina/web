@@ -141,19 +141,6 @@ python trainer/evaluate.py --dataset evaluacion.jsonl --model qwen-dominio-v1 --
 
 Considera el resultado un fine-tuning útil solo si mejora en un conjunto de prueba separado y no degrada de forma importante tareas generales. Revisa además respuestas manualmente: la tasa `contains` es reproducible, pero no mide por sí sola calidad, seguridad ni alucinaciones.
 
-Para simplificar la evaluación desde Fish:
-
-```fish
-./comandos.fish fine-tune-evaluate evaluacion.jsonl Qwen/Qwen3.5-0.8B outputs/base.json
-./comandos.fish fine-tune-evaluate evaluacion.jsonl qwen-dominio-v1 outputs/lora.json
-```
-
-Para listar adaptadores que ya tienen manifiesto:
-
-```fish
-./comandos.fish fine-tune-list
-```
-
 La evaluación necesita que vLLM esté activo y que el nombre del modelo ya esté
 publicado. Compara siempre el mismo conjunto de casos, primero con el modelo
 base y luego con el adaptador:
@@ -163,6 +150,12 @@ base y luego con el adaptador:
   Qwen/Qwen3.5-0.8B outputs/base.json
 ./comandos.fish fine-tune-evaluate datasets/evaluacion.jsonl \
   qwen-dominio-v1 outputs/lora.json
+```
+
+Para listar adaptadores que ya tienen manifiesto:
+
+```fish
+./comandos.fish fine-tune-list
 ```
 
 El resultado JSON incluye `passRate`, latencia y la respuesta de cada caso.
