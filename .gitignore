@@ -47,3 +47,4 @@ next-env.d.ts
 /trainer/datasets/
 /trainer/.venv/
 /trainer/__pycache__/
+/tests/__pycache__/

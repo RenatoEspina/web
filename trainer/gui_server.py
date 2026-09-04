@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import argparse
+import grp
 import hmac
 import json
 import os
+import pwd
 import re
 import secrets
+import shlex
 import shutil
 import signal
 import subprocess
@@ -37,6 +40,8 @@ MAX_LOG_LINES = 2500
 SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 SAFE_DATASET = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,126}\.jsonl$")
 SAFE_MODEL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,255}$")
+EVALUATION_DATASETS = {"evaluation.jsonl"}
+DEFAULT_VLLM_IMAGE = "vllm/vllm-openai:v0.24.0"
 CUDA_CHECK = 'import torch; assert torch.cuda.is_available(), "CUDA no está disponible"; import bitsandbytes; from bitsandbytes.functional import quantize_4bit; x=torch.ones((2,2), device="cuda"); quantize_4bit(x, quant_type="nf4"); print(f"PyTorch: {torch.__version__}"); print(f"CUDA de PyTorch: {torch.version.cuda}"); print(f"GPU: {torch.cuda.get_device_name(0)}"); print(f"bitsandbytes: {bitsandbytes.__version__}"); print("bitsandbytes NF4: OK")'
 
 
@@ -119,6 +124,8 @@ def dataset_path(dataset_id: Any) -> Path:
     candidate = (TRAINER_DIR / dataset_id).resolve()
     if candidate.parent not in {DATASET_DIR.resolve(), EXAMPLE_DIR.resolve()} or candidate.suffix != ".jsonl":
         raise ValueError("Dataset fuera de las carpetas permitidas.")
+    if candidate.name.casefold() in EVALUATION_DATASETS:
+        raise ValueError("evaluation.jsonl es un dataset de evaluación y no se puede usar para SFT.")
     if not candidate.is_file():
         raise ValueError("El dataset seleccionado ya no existe.")
     return candidate
@@ -138,8 +145,85 @@ def list_datasets() -> list[dict[str, Any]]:
         if not directory.exists():
             continue
         for path in sorted(directory.glob("*.jsonl")):
+            if path.name.casefold() in EVALUATION_DATASETS:
+                continue
             result.append({"id": path.relative_to(TRAINER_DIR).as_posix(), "name": path.name, "kind": label, "bytes": path.stat().st_size})
     return result
+
+
+def adapter_dir_diagnostic() -> str:
+    target = ADAPTER_DIR if ADAPTER_DIR.exists() else ADAPTER_DIR.parent
+    try:
+        info = target.stat()
+        owner = pwd.getpwuid(info.st_uid).pw_name
+        group = grp.getgrgid(info.st_gid).gr_name
+        mode = f"{info.st_mode & 0o777:03o}"
+        return f"{target}: owner={owner}:{group} ({info.st_uid}:{info.st_gid}), mode={mode}"
+    except (KeyError, OSError) as error:
+        return f"{target}: no se pudo obtener owner/mode ({error})"
+
+
+def adapter_dir_fallback_command() -> str:
+    path = shlex.quote(str(ADAPTER_DIR))
+    return f"sudo chown -R {os.getuid()}:{os.getgid()} -- {path} && sudo chmod -R u+rwX -- {path}"
+
+
+def adapter_dir_is_writable() -> bool:
+    probe = ADAPTER_DIR / f".gui-write-test-{uuid.uuid4().hex}"
+    try:
+        ADAPTER_DIR.mkdir(parents=True, exist_ok=True)
+        probe.write_bytes(b"")
+        return True
+    except OSError:
+        return False
+    finally:
+        try:
+            probe.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def ensure_adapter_dir_writable(job: Job) -> None:
+    """Create or safely repair the adapters bind mount without deleting contents."""
+    if adapter_dir_is_writable():
+        return
+
+    append_log(job, f"adapters/ no es escribible: {adapter_dir_diagnostic()}")
+    docker = shutil.which("docker")
+    if docker and ADAPTER_DIR.exists() and ADAPTER_DIR.is_dir():
+        append_log(job, "Intentando reparar ownership/permisos con un contenedor efímero…")
+        helper_image = os.environ.get("VLLM_IMAGE", DEFAULT_VLLM_IMAGE).strip() or DEFAULT_VLLM_IMAGE
+        try:
+            run_command(
+                job,
+                [
+                    docker,
+                    "run",
+                    "--rm",
+                    "--user",
+                    "0:0",
+                    "-v",
+                    f"{ADAPTER_DIR}:/adapters",
+                    "--entrypoint",
+                    "/bin/sh",
+                    helper_image,
+                    "-c",
+                    f"chown -R {os.getuid()}:{os.getgid()} /adapters && chmod -R u+rwX /adapters",
+                ],
+                label="Reparando permisos de adapters/",
+            )
+        except RuntimeError as error:
+            append_log(job, f"La reparación automática con Docker falló: {error}")
+
+    if adapter_dir_is_writable():
+        append_log(job, "adapters/ ya es escribible por el usuario local; los adaptadores existentes se conservaron.")
+        return
+
+    raise RuntimeError(
+        "No fue posible preparar adapters/ para escritura. "
+        f"Diagnóstico: {adapter_dir_diagnostic()}. "
+        f"Ejecuta manualmente: {adapter_dir_fallback_command()}"
+    )
 
 
 def list_adapters() -> list[dict[str, Any]]:
@@ -295,6 +379,7 @@ def run_action(job: Job, payload: dict[str, Any]) -> None:
     if action == "train":
         dataset = dataset_path(payload.get("dataset"))
         _, summary = load_jsonl(dataset)
+        ensure_adapter_dir_writable(job)
         name = validate_adapter_name(payload.get("name"))
         model = validate_model(payload.get("model"))
         rank = int_arg(payload, "rank", 16, 8, 32)
@@ -317,6 +402,7 @@ def run_action(job: Job, payload: dict[str, Any]) -> None:
         return
     if action == "start-vllm":
         model = validate_model(payload.get("model"))
+        ensure_adapter_dir_writable(job)
         token = str(payload.get("hfToken") or "").strip()
         env = os.environ.copy()
         env["VLLM_MODEL"] = model
@@ -497,6 +583,8 @@ class Handler(BaseHTTPRequestHandler):
                 content = payload.get("content")
                 if not SAFE_DATASET.fullmatch(filename):
                     raise ValueError("El archivo debe tener un nombre simple y extensión .jsonl.")
+                if filename.casefold() in EVALUATION_DATASETS:
+                    raise ValueError("evaluation.jsonl está reservado para evaluación y no es un dataset SFT.")
                 if not isinstance(content, str):
                     raise ValueError("Contenido de dataset inválido.")
                 encoded = content.encode("utf-8")
