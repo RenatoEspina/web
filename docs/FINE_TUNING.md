@@ -1,5 +1,7 @@
 # Fine-tuning QLoRA
 
+> Si PyTorch muestra CUDA 13.x, usa `bitsandbytes` 0.50.2 o posterior. Las versiones antiguas pueden intentar cargar un binario como `libbitsandbytes_cuda130.so` que no está incluido. Si ya instalaste las dependencias, actualízalo con `python -m pip install --force-reinstall --no-cache-dir bitsandbytes==0.50.2` y vuelve a comprobar la importación.
+
 Esta implementación entrena adaptadores reales PEFT mediante SFT + QLoRA. vLLM no entrena: carga el modelo base y el adaptador resultante para inferencia.
 
 ## Preparación
