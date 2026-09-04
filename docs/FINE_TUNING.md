@@ -74,6 +74,23 @@ Cada línea del dataset contiene una conversación independiente:
 
 No uses las mismas preguntas para entrenamiento y evaluación. El ejemplo incluido solo verifica el flujo; dos registros no bastan para producir un adaptador útil.
 
+### Dataset base incluido
+
+El repositorio incluye `trainer/examples/base-training.jsonl`, con ocho
+ejemplos variados de Java, SQL, RAG, vLLM y preparación de QLoRA. Sirve para
+comprobar que el pipeline completo funciona, pero es demasiado pequeño para
+medir una mejora real del modelo:
+
+```fish
+./comandos.fish fine-tune-validate trainer/examples/base-training.jsonl
+./comandos.fish fine-tune-train trainer/examples/base-training.jsonl qwen-demo-v1 \
+  --rank 8 --epochs 1 --max-length 512
+```
+
+El adaptador de esta prueba quedará en `adapters/qwen-demo-v1/`. Para un
+entrenamiento útil, reemplaza este archivo por un dataset propio, más grande y
+separado de los casos usados para evaluación.
+
 ## Entrenamiento
 
 ```bash
