@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+HOST=127.0.0.1
+PORT=${FINE_TUNE_GUI_PORT:-3031}
+URL="http://${HOST}:${PORT}"
+RUNTIME_DIR="$ROOT/.runtime"
+PID_FILE="$RUNTIME_DIR/fine-tune-gui.pid"
+LOG_FILE="$RUNTIME_DIR/fine-tune-gui.log"
+
+mkdir -p "$RUNTIME_DIR"
+
+open_browser() {
+  if command -v xdg-open >/dev/null 2>&1; then
+    xdg-open "$URL" >/dev/null 2>&1 || true
+  elif command -v gio >/dev/null 2>&1; then
+    gio open "$URL" >/dev/null 2>&1 || true
+  else
+    printf 'Abre %s en tu navegador.\n' "$URL"
+  fi
+}
+
+install_desktop_launcher() {
+  [[ -n "${HOME:-}" ]] || return 0
+  local app_dir="$HOME/.local/share/applications"
+  local desktop="$app_dir/llm-bridge-fine-tune.desktop"
+  mkdir -p "$app_dir"
+  cat > "$desktop" <<EOF
+[Desktop Entry]
+Type=Application
+Name=LLM Bridge Fine-tuning
+Comment=Panel local para entrenar y administrar adaptadores QLoRA
+Exec=$ROOT/fine-tune-gui
+Terminal=false
+Categories=Development;Utility;
+StartupNotify=true
+EOF
+  chmod 600 "$desktop"
+  if command -v update-desktop-database >/dev/null 2>&1; then
+    update-desktop-database "$app_dir" >/dev/null 2>&1 || true
+  fi
+}
+
+if curl -fsS "$URL/api/health" >/dev/null 2>&1; then
+  install_desktop_launcher
+  open_browser
+  exit 0
+fi
+
+PYTHON=""
+for candidate in python3.13 python3 python; do
+  if command -v "$candidate" >/dev/null 2>&1; then
+    PYTHON=$(command -v "$candidate")
+    break
+  fi
+done
+
+if [[ -z "$PYTHON" ]]; then
+  echo "Error: se necesita Python 3 para iniciar la GUI local." >&2
+  exit 1
+fi
+
+nohup "$PYTHON" "$ROOT/trainer/gui_server.py" --host "$HOST" --port "$PORT" >>"$LOG_FILE" 2>&1 &
+pid=$!
+printf '%s\n' "$pid" > "$PID_FILE"
+
+for _ in {1..80}; do
+  if curl -fsS "$URL/api/health" >/dev/null 2>&1; then
+    install_desktop_launcher
+    open_browser
+    echo "Fine-tuning GUI disponible en $URL"
+    echo "También quedó instalada como 'LLM Bridge Fine-tuning' en el lanzador de aplicaciones."
+    exit 0
+  fi
+  if ! kill -0 "$pid" >/dev/null 2>&1; then
+    echo "Error: la GUI terminó al iniciar. Revisa $LOG_FILE" >&2
+    exit 1
+  fi
+  sleep 0.25
+done
+
+echo "Error: la GUI no respondió en $URL. Revisa $LOG_FILE" >&2
+exit 1
