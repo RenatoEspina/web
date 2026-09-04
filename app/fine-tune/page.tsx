@@ -20,7 +20,7 @@ export default function FineTunePage() {
   const [loading, setLoading] = useState(false);
 
   const command = useMemo(() => file && validation?.valid
-    ? `./scripts/train-adapter.sh ${JSON.stringify(file.name)} ${JSON.stringify(name)} --rank ${rank} --epochs ${epochs}`
+    ? `./comandos.fish fine-tune-train ${JSON.stringify(file.name)} ${JSON.stringify(name)} --rank ${rank} --epochs ${epochs}`
     : "", [file, name, rank, epochs, validation]);
 
   async function validate(event: FormEvent) {
@@ -56,7 +56,7 @@ export default function FineTunePage() {
           <Button type="submit" disabled={!file || loading}>{loading ? <LoaderCircle className="animate-spin" size={16} /> : <CheckCircle2 size={16} />} Validar dataset</Button>
         </form>
         {error && <p className="mt-5 rounded-lg border border-red-900 bg-red-950/30 p-3 text-sm text-red-300">{error}</p>}
-        {validation?.valid && <div className="mt-6 rounded-xl border border-emerald-900/70 bg-emerald-950/20 p-5"><p className="font-medium text-emerald-300">Dataset válido: {validation.examples} ejemplos · {validation.messages} mensajes · {validation.characters.toLocaleString("es-CL")} caracteres</p><p className="mt-4 text-sm text-zinc-400">Copia el archivo a la raíz del proyecto y ejecuta:</p><pre className="mt-2 overflow-x-auto rounded-lg bg-black p-4 text-sm text-emerald-300"><code>{command}</code></pre><p className="mt-3 text-xs leading-5 text-zinc-500">Al terminar, agrega <code>{name}</code> a <code>LLM_ADAPTER_MODELS</code> y precárgalo en vLLM con <code>--lora-modules {name}=/adapters/{name}</code>.</p></div>}
+        {validation?.valid && <div className="mt-6 rounded-xl border border-emerald-900/70 bg-emerald-950/20 p-5"><p className="font-medium text-emerald-300">Dataset válido: {validation.examples} ejemplos · {validation.messages} mensajes · {validation.characters.toLocaleString("es-CL")} caracteres</p><p className="mt-4 text-sm text-zinc-400">Copia el archivo a la raíz del proyecto y ejecuta:</p><pre className="mt-2 overflow-x-auto rounded-lg bg-black p-4 text-sm text-emerald-300"><code>{command}</code></pre><p className="mt-3 text-xs leading-5 text-zinc-500">Al terminar, ejecuta <code>./comandos.fish fine-tune-config {name}</code> para registrar el adaptador en vLLM y permitirlo en el gateway.</p></div>}
       </section>
     </main>
   );

@@ -97,6 +97,20 @@ base contra LoRA, está en [`docs/FINE_TUNING.md`](docs/FINE_TUNING.md). La ruta
 de evolución hacia el sistema multiagente está en
 [`docs/SCALING_MULTI_AGENT.md`](docs/SCALING_MULTI_AGENT.md).
 
+El flujo habitual se puede ejecutar desde `comandos.fish`:
+
+```fish
+./comandos.fish fine-tune-setup
+./comandos.fish fine-tune-check
+./comandos.fish fine-tune-validate dataset.jsonl
+./comandos.fish fine-tune-train dataset.jsonl qwen-dominio-v1 --rank 16 --epochs 3
+./comandos.fish fine-tune-list
+./comandos.fish fine-tune-config qwen-dominio-v1
+```
+
+Ejecuta `./comandos.fish fine-tune-help` para ver la ayuda y las opciones de
+evaluación.
+
 ## Ejecución local
 
 Desde la raíz del proyecto:
