@@ -40,8 +40,10 @@ next-env.d.ts
 /dist/
 /.wrangler/
 /.sites-runtime/
+/.runtime/
 /outputs/
 /work/
 /adapters/
+/trainer/datasets/
 /trainer/.venv/
 /trainer/__pycache__/
