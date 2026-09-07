@@ -92,13 +92,15 @@ function cosineSimilarity(left: number[], right: number[]): number | null {
 function rankPositions(
   scores: Array<number | undefined>,
   include: (score: number) => boolean,
+  limit: number,
 ): Array<number | undefined> {
   const rankedIndexes = scores
     .map((score, index) => ({ score, index }))
     .filter((item): item is { score: number; index: number } => (
       item.score !== undefined && include(item.score)
     ))
-    .sort((left, right) => right.score - left.score || left.index - right.index);
+    .sort((left, right) => right.score - left.score || left.index - right.index)
+    .slice(0, limit);
 
   const ranks = scores.map(() => undefined as number | undefined);
   rankedIndexes.forEach((item, index) => {
@@ -112,6 +114,7 @@ const RRF_K = 60;
 async function rankChunks(query: string, chunks: DocumentChunk[]): Promise<RankedChunks> {
   if (chunks.length === 0) return { ranked: [], embeddingUsed: false };
 
+  const config = getDocumentConfig();
   const lexicalScores = scoreLexically(query, chunks);
   const semanticScores: Array<number | undefined> = chunks.map(() => undefined);
   let embeddingUsed = false;
@@ -126,19 +129,19 @@ async function rankChunks(query: string, chunks: DocumentChunk[]): Promise<Ranke
           const score = cosineSimilarity(queryEmbedding, chunk.embedding);
           if (score !== null) semanticScores[index] = Math.max(-1, Math.min(1, score));
         });
-        embeddingUsed = semanticScores.some((score) => score !== undefined);
+        embeddingUsed = semanticScores.some((score) => score !== undefined && score > 0);
       }
     } catch (error) {
       console.error("[llm-bridge] Semantic retrieval failed; using lexical retrieval", error);
     }
   }
 
-  const config = getDocumentConfig();
   const weightTotal = config.semanticWeight + config.lexicalWeight;
   const semanticWeight = weightTotal > 0 ? config.semanticWeight / weightTotal : 0.7;
   const lexicalWeight = weightTotal > 0 ? config.lexicalWeight / weightTotal : 0.3;
-  const semanticRanks = rankPositions(semanticScores, () => true);
-  const lexicalRanks = rankPositions(lexicalScores, (score) => score > 0);
+  const candidateLimit = Math.min(chunks.length, Math.max(config.topK * 4, config.topK));
+  const semanticRanks = rankPositions(semanticScores, (score) => score > 0, candidateLimit);
+  const lexicalRanks = rankPositions(lexicalScores, (score) => score > 0, candidateLimit);
 
   const ranked = chunks
     .map((chunk, index) => {
@@ -158,7 +161,7 @@ async function rankChunks(query: string, chunks: DocumentChunk[]): Promise<Ranke
         ...(semanticScores[index] === undefined ? {} : { semanticScore: semanticScores[index] }),
       };
     })
-    .filter((result) => embeddingUsed || result.score > 0)
+    .filter((result) => result.score > 0)
     .sort((left, right) => (
       right.score - left.score ||
       (right.semanticScore ?? -Infinity) - (left.semanticScore ?? -Infinity) ||
