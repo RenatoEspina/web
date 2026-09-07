@@ -119,9 +119,14 @@ async function rankChunks(query: string, chunks: DocumentChunk[]): Promise<Ranke
   const config = getDocumentConfig();
   const lexicalScores = scoreLexically(query, chunks);
   const semanticScores: Array<number | undefined> = chunks.map(() => undefined);
+  const weightTotal = config.semanticWeight + config.lexicalWeight;
+  const semanticWeight = weightTotal > 0 ? config.semanticWeight / weightTotal : 0.7;
+  const lexicalWeight = weightTotal > 0 ? config.lexicalWeight / weightTotal : 0.3;
+  const semanticEnabled = semanticWeight > 0;
+  const lexicalEnabled = lexicalWeight > 0;
 
   const hasStoredEmbeddings = chunks.some((chunk) => Array.isArray(chunk.embedding) && chunk.embedding.length > 0);
-  if (hasStoredEmbeddings && config.semanticWeight > 0) {
+  if (hasStoredEmbeddings && semanticEnabled) {
     try {
       const queryEmbedding = await embedText(query, "query");
       if (queryEmbedding) {
@@ -136,11 +141,6 @@ async function rankChunks(query: string, chunks: DocumentChunk[]): Promise<Ranke
     }
   }
 
-  const weightTotal = config.semanticWeight + config.lexicalWeight;
-  const semanticWeight = weightTotal > 0 ? config.semanticWeight / weightTotal : 0.7;
-  const lexicalWeight = weightTotal > 0 ? config.lexicalWeight / weightTotal : 0.3;
-  const semanticEnabled = semanticWeight > 0;
-  const lexicalEnabled = lexicalWeight > 0;
   const candidateLimit = Math.min(chunks.length, Math.max(config.topK * 4, config.topK));
   const semanticRanks = semanticEnabled
     ? rankPositions(semanticScores, (score) => score >= config.minSemanticScore, candidateLimit)
