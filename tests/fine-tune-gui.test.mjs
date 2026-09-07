@@ -81,3 +81,21 @@ test("la GUI hace visible la compatibilidad y actualización del entorno", () =>
   assert.match(gui, /datasets 4\.8\.5/);
   assert.match(gui, /sincroniza automáticamente un entorno desactualizado/);
 });
+
+test("el stack de fine-tuning soporta oficialmente Qwen3.5 y Python 3.14", () => {
+  assert.match(requirements, /^transformers==5\.16\.1$/m);
+  assert.match(requirements, /^trl==1\.11\.0$/m);
+  assert.match(requirements, /^peft==0\.20\.0$/m);
+  assert.match(requirements, /^accelerate==1\.14\.0$/m);
+  assert.match(dependencyCheck, /"qwen3_5" not in CONFIG_MAPPING/);
+  assert.match(dependencyCheck, /Qwen3_5ForCausalLM/);
+});
+
+test("train.py valida la arquitectura antes de cargar el modelo y no usa Dataset.map con lambda", () => {
+  assert.match(trainer, /validate_model_architecture\(args\.model\)/);
+  assert.match(trainer, /AutoConfig\.from_pretrained/);
+  assert.match(trainer, /processing_class=tokenizer/);
+  assert.match(trainer, /dtype=compute_dtype/);
+  assert.doesNotMatch(trainer, /Dataset\.from_list\(examples\)\.map/);
+  assert.doesNotMatch(trainer, /lambda example/);
+});
