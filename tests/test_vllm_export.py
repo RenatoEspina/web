@@ -50,10 +50,17 @@ class NamespaceTests(unittest.TestCase):
             self.assertFalse(job.result["inferenceVerified"])
 
     def test_export_failure_prevents_runtime_load(self):
-        with mock.patch.object(gui_server, "post_vllm") as post:
-            with self.assertRaises(RuntimeError):
-                gui_server.run_action(gui_server.Job(id="test", action="load-adapter"), {"name": "missing"})
-            post.assert_not_called()
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp) / "demo"
+            directory.mkdir()
+            for filename in ("adapter_config.json", "adapter_model.safetensors"):
+                (directory / filename).write_text("{}")
+            with (mock.patch.object(gui_server, "ADAPTER_DIR", Path(temp)),
+                  mock.patch.object(gui_server, "prepare_runtime_adapter", side_effect=RuntimeError("export failed")),
+                  mock.patch.object(gui_server, "post_vllm") as post):
+                with self.assertRaisesRegex(RuntimeError, "export failed"):
+                    gui_server.run_action(gui_server.Job(id="test", action="load-adapter"), {"name": "demo"})
+                post.assert_not_called()
 
     def test_rollback_restores_exact_exported_runtime_path(self):
         with mock.patch.object(gui_server, "post_vllm") as post:
