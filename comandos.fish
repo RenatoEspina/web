@@ -9,7 +9,6 @@
 #   ./comandos.fish fine-tune-check
 #   ./comandos.fish fine-tune-validate DATASET.jsonl
 #   ./comandos.fish fine-tune-train DATASET.jsonl NOMBRE [opciones]
-#   ./comandos.fish fine-tune-config NOMBRE
 #   ./comandos.fish fine-tune-list
 #   ./comandos.fish fine-tune-evaluate DATASET.jsonl MODELO SALIDA.json
 #   ./comandos.fish status
@@ -78,26 +77,29 @@ function fine_tune_help
     echo "      Valida el formato conversacional sin iniciar Docker."
     echo
     echo "  ./comandos.fish fine-tune-train DATASET.jsonl NOMBRE [opciones]"
-    echo "      Detiene vLLM, entrena QLoRA y lo vuelve a iniciar si estaba activo."
-    echo
-    echo "  ./comandos.fish fine-tune-config NOMBRE"
-    echo "      Comprueba el adaptador y muestra cómo registrarlo en vLLM y la web."
+    echo "      Entrena QLoRA; si vLLM está activo, el script libera la GPU y lo restaura después."
     echo
     echo "  ./comandos.fish fine-tune-list"
-    echo "      Lista los adaptadores con manifest.json."
+    echo "      Lista los adaptadores terminados que contienen manifest.json."
     echo
     echo "  ./comandos.fish fine-tune-evaluate DATASET.jsonl MODELO SALIDA.json"
     echo "      Evalúa un modelo ya servido por vLLM."
+    echo
+    echo "La carga y descarga dinámica de adaptadores se administra desde la GUI local de fine-tuning."
 end
 
 function fine_tune_setup
-    set -l python_command python
+    set -l python_command ""
 
     if command -sq python3.13
         set python_command python3.13
+    else if command -sq python3
+        set python_command python3
+    else if command -sq python
+        set python_command python
+    else
+        fail "No se encontró Python 3 para crear trainer/.venv."
     end
-
-    require_command $python_command
 
     set -l existing_python (trainer_python)
     if test -x "$existing_python"
@@ -121,7 +123,7 @@ end
 function fine_tune_check
     require_trainer
     set -l python_path (trainer_python)
-    "$python_path" -c 'import torch; assert torch.cuda.is_available(), "CUDA no está disponible"; import bitsandbytes; from bitsandbytes.functional import quantize_4bit; x=torch.ones((2,2), device="cuda"); quantize_4bit(x, quant_type="nf4"); print(f"PyTorch: {torch.__version__}"); print(f"CUDA de PyTorch: {torch.version.cuda}"); print(f"GPU: {torch.cuda.get_device_name(0)}"); print(f"bitsandbytes: {bitsandbytes.__version__}"); print("bitsandbytes NF4: OK")'
+    "$python_path" trainer/check_environment.py
     if test $status -ne 0
         fail "La comprobación CUDA/bitsandbytes falló. No inicies el entrenamiento."
     end
@@ -142,16 +144,15 @@ function fine_tune_train
         fail "Uso: ./comandos.fish fine-tune-train DATASET.jsonl NOMBRE [opciones]"
     end
     require_trainer
-    require_docker
+    require_command bash
     test -f "$argv[1]"; or fail "No existe el dataset '$argv[1]'."
-    fine_tune_validate "$argv[1]" >/dev/null; or exit 1
 
     set -l dataset "$argv[1]"
     set -l adapter_name "$argv[2]"
     set -l extra_args $argv[3..-1]
     set -lx FINE_TUNE_PYTHON (trainer_python)
     set -lx COMPOSE_PROJECT_NAME $compose_project
-    echo "Dataset validado. Iniciando entrenamiento de '$adapter_name'..."
+    echo "Iniciando entrenamiento de '$adapter_name'..."
     bash scripts/train-adapter.sh "$dataset" "$adapter_name" $extra_args; or fail \
         "El entrenamiento terminó con error. Revisa el log anterior."
 
@@ -160,38 +161,6 @@ function fine_tune_train
         echo "Adaptador creado: adapters/$adapter_name"
         echo "Manifiesto: adapters/$adapter_name/manifest.json"
     end
-end
-
-function fine_tune_config
-    if test (count $argv) -ne 1
-        fail "Uso: ./comandos.fish fine-tune-config NOMBRE"
-    end
-
-    set -l adapter_name "$argv[1]"
-    if not string match -rq '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$' -- "$adapter_name"
-        fail "Nombre de adaptador inválido: usa letras, números, punto, guion o guion bajo (máximo 64)."
-    end
-
-    set -l adapter_dir "adapters/$adapter_name"
-    test -d "$adapter_dir"; or fail "No existe el adaptador '$adapter_dir'."
-    test -f "$adapter_dir/adapter_config.json"; or fail "Falta $adapter_dir/adapter_config.json."
-    test -f "$adapter_dir/adapter_model.safetensors"; or fail "Falta $adapter_dir/adapter_model.safetensors."
-
-    echo "Adaptador válido: $adapter_dir"
-    echo
-    echo "1. En docker-compose.yml, dentro de command de vllm, agrega:"
-    echo "   - --lora-modules"
-    echo "   - $adapter_name=/adapters/$adapter_name"
-    echo
-    echo "2. En .env.local, permite el nombre que enviará el gateway:"
-    echo "   LLM_ADAPTER_MODELS=$adapter_name"
-    echo
-    echo "3. Recrea vLLM desde la raíz del proyecto:"
-    echo "   ./comandos.fish stop"
-    echo "   ./comandos.fish vllm"
-    echo
-    echo "4. Comprueba los modelos publicados:"
-    echo "   curl -fsS http://127.0.0.1:8000/v1/models"
 end
 
 function fine_tune_list
@@ -436,9 +405,6 @@ switch $argv[1]
     case fine-tune-train
         fine_tune_train $argv[2..-1]
 
-    case fine-tune-config
-        fine_tune_config $argv[2..-1]
-
     case fine-tune-list
         fine_tune_list
 
@@ -458,6 +424,6 @@ switch $argv[1]
 
     case '*'
         echo "Acción desconocida: $argv[1]" >&2
-        echo "Acciones: vllm, ollama, embeddings, fine-tune-setup, fine-tune-check, fine-tune-validate, fine-tune-train, fine-tune-config, fine-tune-list, fine-tune-evaluate, status, stop, down"
+        echo "Acciones: vllm, ollama, embeddings, fine-tune-setup, fine-tune-check, fine-tune-validate, fine-tune-train, fine-tune-list, fine-tune-evaluate, status, stop, down"
         exit 1
 end

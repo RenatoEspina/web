@@ -53,6 +53,30 @@ class AdapterDirectoryTests(unittest.TestCase):
                     gui_server.ensure_adapter_dir_writable(job)
 
 
+class AdapterAllowlistTests(unittest.TestCase):
+    def test_adds_and_removes_adapter_from_gateway_allowlist(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            env_file = root / ".env.local"
+            env_file.write_text("LLM_PROVIDER=vllm\nLLM_ADAPTER_MODELS=existente\n", encoding="utf-8")
+
+            with mock.patch.object(gui_server, "ROOT", root):
+                gui_server.set_adapter_allowed_in_env("nuevo", True)
+                self.assertIn("LLM_ADAPTER_MODELS=existente,nuevo", env_file.read_text(encoding="utf-8"))
+
+                gui_server.set_adapter_allowed_in_env("nuevo", False)
+                contents = env_file.read_text(encoding="utf-8")
+                self.assertIn("LLM_ADAPTER_MODELS=existente", contents)
+                self.assertNotIn("existente,nuevo", contents)
+
+    def test_removing_unknown_adapter_does_not_create_env_file(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            with mock.patch.object(gui_server, "ROOT", root):
+                gui_server.set_adapter_allowed_in_env("inexistente", False)
+            self.assertFalse((root / ".env.local").exists())
+
+
 class DatasetTests(unittest.TestCase):
     def test_evaluation_dataset_is_not_listed_or_trainable(self):
         self.assertNotIn("evaluation.jsonl", {item["name"] for item in gui_server.list_datasets()})

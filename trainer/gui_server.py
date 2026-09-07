@@ -35,6 +35,7 @@ DATASET_DIR = TRAINER_DIR / "datasets"
 EXAMPLE_DIR = TRAINER_DIR / "examples"
 ADAPTER_DIR = ROOT / "adapters"
 RUNTIME_DIR = ROOT / ".runtime"
+ENVIRONMENT_CHECK = TRAINER_DIR / "check_environment.py"
 MAX_BODY_BYTES = 40 * 1024 * 1024
 MAX_LOG_LINES = 2500
 SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
@@ -42,7 +43,6 @@ SAFE_DATASET = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,126}\.jsonl$")
 SAFE_MODEL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,255}$")
 EVALUATION_DATASETS = {"evaluation.jsonl"}
 DEFAULT_VLLM_IMAGE = "vllm/vllm-openai:v0.24.0"
-CUDA_CHECK = 'import torch; assert torch.cuda.is_available(), "CUDA no está disponible"; import bitsandbytes; from bitsandbytes.functional import quantize_4bit; x=torch.ones((2,2), device="cuda"); quantize_4bit(x, quant_type="nf4"); print(f"PyTorch: {torch.__version__}"); print(f"CUDA de PyTorch: {torch.version.cuda}"); print(f"GPU: {torch.cuda.get_device_name(0)}"); print(f"bitsandbytes: {bitsandbytes.__version__}"); print("bitsandbytes NF4: OK")'
 
 
 @dataclass
@@ -293,6 +293,10 @@ def run_command(job: Job, command: list[str], *, env: dict[str, str] | None = No
         raise RuntimeError(f"El proceso terminó con código {returncode}.")
 
 
+def check_training_environment(job: Job, label: str) -> None:
+    run_command(job, [str(trainer_python()), str(ENVIRONMENT_CHECK)], label=label)
+
+
 def wait_for_vllm(job: Job, timeout: int) -> None:
     append_log(job, "Esperando a que vLLM quede saludable…")
     started = time.monotonic()
@@ -314,26 +318,36 @@ def wait_for_vllm(job: Job, timeout: int) -> None:
     raise RuntimeError(f"Timeout esperando vLLM después de {timeout} segundos.")
 
 
-def register_adapter_in_env(name: str) -> None:
+def set_adapter_allowed_in_env(name: str, allowed: bool) -> None:
     env_file = ROOT / ".env.local"
     try:
         text = env_file.read_text(encoding="utf-8") if env_file.exists() else ""
     except OSError as error:
         raise RuntimeError(f"No fue posible leer {env_file.name}: {error}") from error
+
     lines = text.splitlines()
-    updated = False
-    for index, line in enumerate(lines):
-        if line.startswith("LLM_ADAPTER_MODELS="):
-            current = [item.strip() for item in line.split("=", 1)[1].split(",") if item.strip()]
-            if name not in current:
-                current.append(name)
-            lines[index] = "LLM_ADAPTER_MODELS=" + ",".join(current)
-            updated = True
-            break
-    if not updated:
+    entry_index = next(
+        (index for index, line in enumerate(lines) if line.startswith("LLM_ADAPTER_MODELS=")),
+        None,
+    )
+    if entry_index is None:
+        if not allowed:
+            return
         if lines and lines[-1].strip():
             lines.append("")
         lines.extend(["# Adaptadores LoRA permitidos por el gateway.", f"LLM_ADAPTER_MODELS={name}"])
+    else:
+        current = [
+            item.strip()
+            for item in lines[entry_index].split("=", 1)[1].split(",")
+            if item.strip()
+        ]
+        if allowed and name not in current:
+            current.append(name)
+        if not allowed:
+            current = [item for item in current if item != name]
+        lines[entry_index] = "LLM_ADAPTER_MODELS=" + ",".join(current)
+
     temporary = env_file.with_suffix(env_file.suffix + ".tmp")
     temporary.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
     os.replace(temporary, env_file)
@@ -367,13 +381,13 @@ def run_action(job: Job, payload: dict[str, Any]) -> None:
     action = job.action
     if action == "setup":
         setup_environment(job)
-        run_command(job, [str(trainer_python()), "-c", CUDA_CHECK], label="Comprobando CUDA y bitsandbytes")
+        check_training_environment(job, "Comprobando CUDA y bitsandbytes")
         job.result = {"environmentReady": True}
         return
     if action == "check":
         if not trainer_python().is_file():
             raise RuntimeError("Primero prepara el entorno de fine-tuning.")
-        run_command(job, [str(trainer_python()), "-c", CUDA_CHECK], label="Comprobando CUDA y bitsandbytes")
+        check_training_environment(job, "Comprobando CUDA y bitsandbytes")
         job.result = {"check": "ok"}
         return
     if action == "train":
@@ -395,7 +409,7 @@ def run_action(job: Job, payload: dict[str, Any]) -> None:
         seed = int_arg(payload, "seed", 42, 0, 2_147_483_647)
         if not trainer_python().is_file():
             setup_environment(job, automatic=True)
-        run_command(job, [str(trainer_python()), "-c", CUDA_CHECK], label="Verificando entorno")
+        check_training_environment(job, "Verificando entorno")
         command = ["bash", str(ROOT / "scripts" / "train-adapter.sh"), str(dataset), name, "--model", model, "--rank", str(rank), "--alpha", str(alpha), "--dropout", str(dropout), "--epochs", str(epochs), "--learning-rate", str(learning_rate), "--batch-size", str(batch_size), "--gradient-accumulation", str(gradient_accumulation), "--max-length", str(max_length), "--seed", str(seed)]
         run_command(job, command, label=f"Entrenando {name}")
         job.result = {"adapter": name, "dataset": dataset.name, "examples": summary["examples"]}
@@ -425,14 +439,16 @@ def run_action(job: Job, payload: dict[str, Any]) -> None:
             append_log(job, f"Cargando {name} en vLLM...")
             response = post_vllm("/v1/load_lora_adapter", {"lora_name": name, "lora_path": f"/adapters/{name}"})
             append_log(job, response or "Adaptador cargado.")
-            register_adapter_in_env(name)
+            set_adapter_allowed_in_env(name, True)
             append_log(job, "Adaptador agregado a LLM_ADAPTER_MODELS en .env.local. Si la web ya estaba activa, reiníciala para que relea el entorno.")
             job.result = {"adapter": name, "loaded": True, "gatewayRegistered": True}
         else:
             append_log(job, f"Descargando {name} de vLLM...")
             response = post_vllm("/v1/unload_lora_adapter", {"lora_name": name})
             append_log(job, response or "Adaptador descargado.")
-            job.result = {"adapter": name, "loaded": False}
+            set_adapter_allowed_in_env(name, False)
+            append_log(job, "Adaptador retirado de LLM_ADAPTER_MODELS. Si la web ya estaba activa, reiníciala para que relea el entorno.")
+            job.result = {"adapter": name, "loaded": False, "gatewayRegistered": False}
         return
     raise ValueError("Acción no permitida.")
 

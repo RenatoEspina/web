@@ -1,10 +1,10 @@
 # GUI local de fine-tuning
 
-El proyecto incluye un panel web **exclusivamente local** para preparar y ejecutar fine-tuning SFT + QLoRA sin tener que copiar comandos entre terminales.
+El proyecto incluye un panel web **exclusivamente local** para administrar SFT + QLoRA sin exponer operaciones administrativas en el chat público.
 
 ## Arranque
 
-Desde la raíz del proyecto, la primera vez ejecuta:
+Desde la raíz:
 
 ```bash
 ./fine-tune-gui
@@ -13,89 +13,108 @@ Desde la raíz del proyecto, la primera vez ejecuta:
 El lanzador:
 
 1. inicia `trainer/gui_server.py` en `127.0.0.1:3031`;
-2. abre el navegador automáticamente;
+2. abre el navegador;
 3. crea una entrada local llamada **LLM Bridge Fine-tuning** en el menú de aplicaciones del usuario.
 
-Después de esa primera ejecución se puede abrir el panel desde el lanzador de aplicaciones sin volver a usar la terminal. Si el puerto `3031` está ocupado, se puede definir otro antes de ejecutar el lanzador:
+Para usar otro puerto:
 
 ```bash
 FINE_TUNE_GUI_PORT=3040 ./fine-tune-gui
 ```
 
+La ruta `/fine-tune` de la aplicación principal ya no implementa un segundo flujo de entrenamiento: solo informa cómo abrir esta GUI local.
+
 ## Flujo recomendado
 
 ### 1. Preparar entorno
 
-Pulsa **Preparar entorno**. La GUI busca Python 3.13 primero y, si no está disponible, usa `python3`/`python`. Luego:
+Pulsa **Preparar entorno**. La GUI busca Python 3.13 y luego `python3`/`python`, crea `trainer/.venv`, actualiza `pip` e instala `trainer/requirements.txt`.
 
-- crea `trainer/.venv`;
-- actualiza `pip`;
-- instala `trainer/requirements.txt`;
-- comprueba PyTorch, CUDA, la GPU, `bitsandbytes` y una cuantización NF4 real.
+La verificación usa el mismo script que el CLI:
 
-El log se muestra dentro del navegador.
+```text
+trainer/check_environment.py
+```
+
+Este script comprueba PyTorch, CUDA, GPU, `bitsandbytes` y una cuantización NF4 real.
 
 ### 2. Subir el dataset
 
-Selecciona un `.jsonl`. La GUI lo valida con la misma lógica del entrenador antes de persistirlo en `trainer/datasets/`.
+Selecciona un `.jsonl`. Antes de guardarlo en `trainer/datasets/`, la GUI lo valida con `trainer/dataset_validation.py`, que es el validador canónico del proyecto.
 
-También aparece `trainer/examples/base-training.jsonl`, pensado únicamente para comprobar que el pipeline funciona. No es un dataset suficiente para medir calidad real.
+`trainer/examples/base-training.jsonl` sirve únicamente para comprobar el pipeline. No es un dataset suficiente para medir calidad real.
+
+`evaluation.jsonl` queda reservado para evaluación y no aparece como dataset entrenable.
 
 ### 3. Entrenar
 
-Configura como mínimo:
+Configura:
 
 - nombre del adaptador;
 - modelo base;
 - rank LoRA;
-- épocas.
-
-Los parámetros avanzados permiten cambiar alpha, dropout, learning rate, batch size, gradient accumulation, longitud máxima y seed.
+- épocas;
+- opcionalmente alpha, dropout, learning rate, batch size, gradient accumulation, longitud máxima y seed.
 
 Al pulsar **Preparar y entrenar**, la GUI:
 
-1. crea el entorno automáticamente si todavía no existe;
+1. prepara el entorno si todavía no existe;
 2. comprueba CUDA/NF4;
-3. valida nuevamente el dataset;
-4. ejecuta `scripts/train-adapter.sh`;
-5. detiene vLLM si estaba usando la GPU;
-6. entrena el adaptador;
-7. vuelve a iniciar vLLM si el script detectó que estaba activo antes del entrenamiento.
+3. ejecuta `scripts/train-adapter.sh`;
+4. detiene vLLM si estaba activo para liberar GPU;
+5. entrena QLoRA;
+6. vuelve a iniciar vLLM si estaba activo antes del entrenamiento.
 
-Solo se permite una operación pesada al mismo tiempo. La operación actual se puede cancelar desde la propia página.
+El entrenador trabaja primero en un directorio temporal oculto y solo publica `adapters/<nombre>/` después de guardar correctamente pesos, tokenizer y `manifest.json`. Un fallo no deja un adaptador parcial bloqueando el mismo nombre.
 
-### 4. Iniciar vLLM
+Solo se permite una operación pesada simultánea. El trabajo actual se puede cancelar desde la propia página.
 
-La GUI puede iniciar o detener únicamente el servicio `vllm` de `docker-compose.yml`. Para un modelo público el token de Hugging Face puede dejarse vacío. Para modelos gated se puede introducir el token en el formulario; el panel no lo persiste.
+### 4. Iniciar o detener vLLM
 
-### 5. Cargar el adaptador
+La GUI administra el servicio `vllm` del `docker-compose.yml`. Para modelos gated se puede introducir un token de Hugging Face en el formulario; el panel no lo persiste.
 
-Los adaptadores válidos creados bajo `adapters/` aparecen en la GUI. Al pulsar **Cargar en vLLM** se usa el endpoint local `/v1/load_lora_adapter` y la ruta del contenedor `/adapters/<nombre>`.
+### 5. Cargar o descargar LoRA
 
-Además, la GUI agrega el nombre a `LLM_ADAPTER_MODELS` dentro de `.env.local` para mantener la allowlist del gateway. Si la web ya estaba ejecutándose, hay que reiniciarla para que relea esa variable de entorno.
+Los adaptadores válidos terminados bajo `adapters/` aparecen en la GUI.
+
+**Cargar en vLLM** utiliza:
+
+```text
+POST /v1/load_lora_adapter
+```
+
+y registra el nombre en `LLM_ADAPTER_MODELS` dentro de `.env.local`.
+
+**Descargar de vLLM** utiliza:
+
+```text
+POST /v1/unload_lora_adapter
+```
+
+y retira el nombre de `LLM_ADAPTER_MODELS` para evitar que el selector del gateway anuncie un adaptador que ya no está cargado.
+
+Si la aplicación web ya estaba ejecutándose, reiníciala después de modificar la allowlist para que relea `.env.local`.
 
 ## Seguridad local
 
-El panel está diseñado como una herramienta administrativa local, no como parte pública del chat:
+El panel es una herramienta administrativa local:
 
-- el servidor solo acepta `127.0.0.1`, `localhost` o `::1`;
+- solo acepta `127.0.0.1`, `localhost` o `::1`;
 - el lanzador usa `127.0.0.1`;
-- las operaciones mutables requieren un token aleatorio de sesión enviado mediante `X-Fine-Tune-Token`;
-- no se habilita CORS;
-- los datasets solo se pueden seleccionar desde `trainer/datasets/` o `trainer/examples/`;
+- las operaciones mutables requieren un token aleatorio de sesión en `X-Fine-Tune-Token`;
+- no habilita CORS;
+- los datasets solo provienen de `trainer/datasets/` o `trainer/examples/`;
 - los adaptadores solo se cargan desde `adapters/` y sus nombres se validan;
 - no existe un endpoint para ejecutar comandos arbitrarios;
 - vLLM continúa publicado en el host únicamente como `127.0.0.1:8000`.
 
-La carga dinámica de LoRA de vLLM requiere `VLLM_ALLOW_RUNTIME_LORA_UPDATING=True`. vLLM advierte que esta función no debe exponerse a clientes no confiables. En este proyecto se habilita porque el puerto de vLLM y la GUI permanecen restringidos a loopback.
-
-Documentación oficial: https://docs.vllm.ai/en/stable/features/lora/
+La carga dinámica de LoRA requiere `VLLM_ALLOW_RUNTIME_LORA_UPDATING=True`. Esa API no debe exponerse a clientes no confiables; en este proyecto permanece detrás de loopback.
 
 ## Cerrar el panel
 
-Pulsa **Cerrar panel** en la esquina superior derecha. Esto detiene el servidor administrativo local. El adaptador entrenado y los servicios Docker continúan en el estado en que hayan quedado.
+Pulsa **Cerrar panel**. Esto detiene el servidor administrativo local; los adaptadores y servicios Docker quedan en el estado actual.
 
-Si necesitas depurar un fallo de arranque, revisa:
+Para depurar el lanzador:
 
 ```text
 .runtime/fine-tune-gui.log
@@ -103,4 +122,19 @@ Si necesitas depurar un fallo de arranque, revisa:
 
 ## CLI como fallback
 
-La GUI no elimina los comandos existentes. Para automatización, scripts o diagnóstico siguen disponibles `fine-tune-setup`, `fine-tune-check`, `fine-tune-validate`, `fine-tune-train`, `fine-tune-list` y `fine-tune-evaluate` mediante `comandos.fish`.
+Para automatización o diagnóstico:
+
+```text
+fine-tune-setup
+fine-tune-check
+fine-tune-validate
+fine-tune-train
+fine-tune-list
+fine-tune-evaluate
+```
+
+Consulta la ayuda con:
+
+```fish
+./comandos.fish fine-tune-help
+```

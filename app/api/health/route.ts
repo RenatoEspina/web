@@ -1,23 +1,11 @@
+import { errorResponse, isAuthorized } from "@/lib/http/request";
 import { checkProvider } from "@/lib/llm";
-import { getAppToken } from "@/lib/llm/config";
 
 export const dynamic = "force-dynamic";
 
-function authorized(request: Request): boolean {
-  const appToken = getAppToken();
-  if (!appToken) return true;
-
-  const authorization = request.headers.get("authorization") ?? "";
-  const suppliedToken = authorization.startsWith("Bearer ")
-    ? authorization.slice("Bearer ".length).trim()
-    : request.headers.get("x-app-token") ?? "";
-
-  return suppliedToken === appToken;
-}
-
 export async function GET(request: Request) {
-  if (!authorized(request)) {
-    return Response.json({ error: "Se requiere una clave de acceso." }, { status: 401 });
+  if (!isAuthorized(request)) {
+    return errorResponse("Se requiere una clave de acceso.", 401);
   }
 
   try {
