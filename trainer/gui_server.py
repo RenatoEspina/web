@@ -38,6 +38,7 @@ RUNTIME_DIR = ROOT / ".runtime"
 ENVIRONMENT_CHECK = TRAINER_DIR / "check_environment.py"
 MAX_BODY_BYTES = 40 * 1024 * 1024
 MAX_LOG_LINES = 2500
+MAX_HF_TOKEN_LENGTH = 4096
 SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 SAFE_DATASET = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,126}\.jsonl$")
 SAFE_MODEL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,255}$")
@@ -97,6 +98,25 @@ def validate_model(value: Any) -> str:
     return model
 
 
+def validate_hf_token(value: Any) -> str:
+    """Valida un token efímero sin asumir un prefijo concreto de Hugging Face."""
+    token = str(value or "").strip()
+    if not token:
+        return ""
+    if len(token) > MAX_HF_TOKEN_LENGTH or any(character.isspace() for character in token):
+        raise ValueError("HF token inválido.")
+    return token
+
+
+def environment_with_hf_token(token: str) -> dict[str, str]:
+    """Crea un entorno hijo con credenciales HF sin modificar os.environ ni persistirlas."""
+    env = os.environ.copy()
+    if token:
+        env["HF_TOKEN"] = token
+        env["HUGGING_FACE_HUB_TOKEN"] = token
+    return env
+
+
 def number_arg(payload: dict[str, Any], key: str, default: float, minimum: float, maximum: float) -> float:
     try:
         value = float(payload.get(key, default))
@@ -147,7 +167,14 @@ def list_datasets() -> list[dict[str, Any]]:
         for path in sorted(directory.glob("*.jsonl")):
             if path.name.casefold() in EVALUATION_DATASETS:
                 continue
-            result.append({"id": path.relative_to(TRAINER_DIR).as_posix(), "name": path.name, "kind": label, "bytes": path.stat().st_size})
+            result.append(
+                {
+                    "id": path.relative_to(TRAINER_DIR).as_posix(),
+                    "name": path.name,
+                    "kind": label,
+                    "bytes": path.stat().st_size,
+                }
+            )
     return result
 
 
@@ -238,7 +265,16 @@ def list_adapters() -> list[dict[str, Any]]:
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             manifest = {}
-        result.append({"name": directory.name, "baseModel": manifest.get("baseModel"), "createdAt": manifest.get("createdAt"), "examples": manifest.get("examples"), "rank": (manifest.get("parameters") or {}).get("rank"), "metrics": manifest.get("metrics") or {}})
+        result.append(
+            {
+                "name": directory.name,
+                "baseModel": manifest.get("baseModel"),
+                "createdAt": manifest.get("createdAt"),
+                "examples": manifest.get("examples"),
+                "rank": (manifest.get("parameters") or {}).get("rank"),
+                "metrics": manifest.get("metrics") or {},
+            }
+        )
     return result
 
 
@@ -246,7 +282,11 @@ def fetch_vllm_models() -> tuple[bool, list[str]]:
     try:
         with urlopen("http://127.0.0.1:8000/v1/models", timeout=0.8) as response:
             payload = json.load(response)
-        models = [str(item.get("id")) for item in payload.get("data", []) if isinstance(item, dict) and item.get("id")]
+        models = [
+            str(item.get("id"))
+            for item in payload.get("data", [])
+            if isinstance(item, dict) and item.get("id")
+        ]
         return True, models
     except (OSError, URLError, ValueError, json.JSONDecodeError):
         return False, []
@@ -255,14 +295,34 @@ def fetch_vllm_models() -> tuple[bool, list[str]]:
 def job_snapshot(job: Job | None) -> dict[str, Any] | None:
     if job is None:
         return None
-    return {"id": job.id, "action": job.action, "status": job.status, "startedAt": job.started_at, "finishedAt": job.finished_at, "returncode": job.returncode, "logs": list(job.logs), "result": job.result, "cancelRequested": job.cancel_requested}
+    return {
+        "id": job.id,
+        "action": job.action,
+        "status": job.status,
+        "startedAt": job.started_at,
+        "finishedAt": job.finished_at,
+        "returncode": job.returncode,
+        "logs": list(job.logs),
+        "result": job.result,
+        "cancelRequested": job.cancel_requested,
+    }
 
 
 def status_payload() -> dict[str, Any]:
     running, models = fetch_vllm_models()
     with STATE_LOCK:
         job = job_snapshot(CURRENT_JOB)
-    return {"localOnly": True, "environmentReady": trainer_python().is_file(), "dockerCli": shutil.which("docker") is not None, "bashCli": shutil.which("bash") is not None, "vllmRunning": running, "vllmModels": models, "datasets": list_datasets(), "adapters": list_adapters(), "job": job}
+    return {
+        "localOnly": True,
+        "environmentReady": trainer_python().is_file(),
+        "dockerCli": shutil.which("docker") is not None,
+        "bashCli": shutil.which("bash") is not None,
+        "vllmRunning": running,
+        "vllmModels": models,
+        "datasets": list_datasets(),
+        "adapters": list_adapters(),
+        "job": job,
+    }
 
 
 def append_log(job: Job, line: str) -> None:
@@ -272,12 +332,27 @@ def append_log(job: Job, line: str) -> None:
             job.logs.append(clean)
 
 
-def run_command(job: Job, command: list[str], *, env: dict[str, str] | None = None, label: str | None = None) -> None:
+def run_command(
+    job: Job,
+    command: list[str],
+    *,
+    env: dict[str, str] | None = None,
+    label: str | None = None,
+) -> None:
     if job.cancel_requested:
         raise JobCancelled()
     if label:
         append_log(job, f"\n== {label} ==")
-    process = subprocess.Popen(command, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1, env=env, start_new_session=True)
+    process = subprocess.Popen(
+        command,
+        cwd=ROOT,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
+        env=env,
+        start_new_session=True,
+    )
     with STATE_LOCK:
         job.process = process
     assert process.stdout is not None
@@ -319,7 +394,12 @@ def wait_for_vllm(job: Job, timeout: int) -> None:
 
 
 def post_vllm(path: str, payload: dict[str, str]) -> str:
-    request = Request(f"http://127.0.0.1:8000{path}", data=json.dumps(payload).encode("utf-8"), headers={"Content-Type": "application/json"}, method="POST")
+    request = Request(
+        f"http://127.0.0.1:8000{path}",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
     try:
         with urlopen(request, timeout=30) as response:
             return response.read().decode("utf-8", errors="replace").strip()
@@ -400,10 +480,18 @@ def setup_environment(job: Job, *, automatic: bool = False) -> None:
         raise RuntimeError("No se encontró Python 3 para crear trainer/.venv.")
     preferred = TRAINER_DIR / ".venv" / "bin" / "python"
     if not preferred.is_file():
-        run_command(job, [python_command, "-m", "venv", str(TRAINER_DIR / ".venv")], label="Creando entorno virtual automáticamente" if automatic else "Creando entorno virtual")
+        run_command(
+            job,
+            [python_command, "-m", "venv", str(TRAINER_DIR / ".venv")],
+            label="Creando entorno virtual automáticamente" if automatic else "Creando entorno virtual",
+        )
     python_path = str(trainer_python())
     run_command(job, [python_path, "-m", "pip", "install", "--upgrade", "pip"], label="Actualizando pip")
-    run_command(job, [python_path, "-m", "pip", "install", "-r", str(TRAINER_DIR / "requirements.txt")], label="Instalando dependencias")
+    run_command(
+        job,
+        [python_path, "-m", "pip", "install", "-r", str(TRAINER_DIR / "requirements.txt")],
+        label="Instalando dependencias",
+    )
 
 
 def run_action(job: Job, payload: dict[str, Any]) -> None:
@@ -425,6 +513,7 @@ def run_action(job: Job, payload: dict[str, Any]) -> None:
         ensure_adapter_dir_writable(job)
         name = validate_adapter_name(payload.get("name"))
         model = validate_model(payload.get("model"))
+        hf_token = validate_hf_token(payload.pop("hfToken", ""))
         rank = int_arg(payload, "rank", 16, 8, 32)
         if rank not in {8, 16, 32}:
             raise ValueError("rank debe ser 8, 16 o 32.")
@@ -439,24 +528,59 @@ def run_action(job: Job, payload: dict[str, Any]) -> None:
         if not trainer_python().is_file():
             setup_environment(job, automatic=True)
         check_training_environment(job, "Verificando entorno")
-        command = ["bash", str(ROOT / "scripts" / "train-adapter.sh"), str(dataset), name, "--model", model, "--rank", str(rank), "--alpha", str(alpha), "--dropout", str(dropout), "--epochs", str(epochs), "--learning-rate", str(learning_rate), "--batch-size", str(batch_size), "--gradient-accumulation", str(gradient_accumulation), "--max-length", str(max_length), "--seed", str(seed)]
-        run_command(job, command, label=f"Entrenando {name}")
+        command = [
+            "bash",
+            str(ROOT / "scripts" / "train-adapter.sh"),
+            str(dataset),
+            name,
+            "--model",
+            model,
+            "--rank",
+            str(rank),
+            "--alpha",
+            str(alpha),
+            "--dropout",
+            str(dropout),
+            "--epochs",
+            str(epochs),
+            "--learning-rate",
+            str(learning_rate),
+            "--batch-size",
+            str(batch_size),
+            "--gradient-accumulation",
+            str(gradient_accumulation),
+            "--max-length",
+            str(max_length),
+            "--seed",
+            str(seed),
+        ]
+        training_env = environment_with_hf_token(hf_token)
+        if hf_token:
+            append_log(job, "Hugging Face: autenticación efímera habilitada para las descargas del entrenamiento.")
+        run_command(job, command, env=training_env, label=f"Entrenando {name}")
         job.result = {"adapter": name, "dataset": dataset.name, "examples": summary["examples"]}
         return
     if action == "start-vllm":
         model = validate_model(payload.get("model"))
         ensure_adapter_dir_writable(job)
-        token = str(payload.get("hfToken") or "").strip()
-        env = os.environ.copy()
+        hf_token = validate_hf_token(payload.pop("hfToken", ""))
+        env = environment_with_hf_token(hf_token)
         env["VLLM_MODEL"] = model
-        if token:
-            env["HF_TOKEN"] = token
-        run_command(job, ["docker", "compose", "-p", "llm-bridge", "up", "-d", "vllm"], env=env, label=f"Iniciando vLLM con {model}")
+        run_command(
+            job,
+            ["docker", "compose", "-p", "llm-bridge", "up", "-d", "vllm"],
+            env=env,
+            label=f"Iniciando vLLM con {model}",
+        )
         wait_for_vllm(job, timeout=900)
         job.result = {"vllm": "started", "model": model}
         return
     if action == "stop-vllm":
-        run_command(job, ["docker", "compose", "-p", "llm-bridge", "stop", "vllm"], label="Deteniendo vLLM")
+        run_command(
+            job,
+            ["docker", "compose", "-p", "llm-bridge", "stop", "vllm"],
+            label="Deteniendo vLLM",
+        )
         job.result = {"vllm": "stopped"}
         return
     if action in {"load-adapter", "unload-adapter"}:
@@ -466,10 +590,16 @@ def run_action(job: Job, payload: dict[str, Any]) -> None:
             if not (directory / "adapter_config.json").is_file() or not (directory / "adapter_model.safetensors").is_file():
                 raise RuntimeError("El adaptador no contiene los archivos PEFT esperados.")
             append_log(job, f"Cargando {name} en vLLM...")
-            response = post_vllm("/v1/load_lora_adapter", {"lora_name": name, "lora_path": f"/adapters/{name}"})
+            response = post_vllm(
+                "/v1/load_lora_adapter",
+                {"lora_name": name, "lora_path": f"/adapters/{name}"},
+            )
             append_log(job, response or "Adaptador cargado.")
             set_adapter_allowed_in_env(name, True, rollback_runtime=True)
-            append_log(job, "Adaptador agregado a LLM_ADAPTER_MODELS en .env.local. Si la web ya estaba activa, reiníciala para que relea el entorno.")
+            append_log(
+                job,
+                "Adaptador agregado a LLM_ADAPTER_MODELS en .env.local. Si la web ya estaba activa, reiníciala para que relea el entorno.",
+            )
             job.result = {
                 "adapter": name,
                 "runtimeLoaded": True,
@@ -481,7 +611,10 @@ def run_action(job: Job, payload: dict[str, Any]) -> None:
             response = post_vllm("/v1/unload_lora_adapter", {"lora_name": name})
             append_log(job, response or "Adaptador descargado.")
             set_adapter_allowed_in_env(name, False, rollback_runtime=True)
-            append_log(job, "Adaptador retirado de LLM_ADAPTER_MODELS. Si la web ya estaba activa, reiníciala para que relea el entorno.")
+            append_log(
+                job,
+                "Adaptador retirado de LLM_ADAPTER_MODELS. Si la web ya estaba activa, reiníciala para que relea el entorno.",
+            )
             job.result = {
                 "adapter": name,
                 "runtimeLoaded": False,
@@ -596,7 +729,10 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Frame-Options", "DENY")
         self.send_header("X-Content-Type-Options", "nosniff")
-        self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
+        self.send_header(
+            "Content-Security-Policy",
+            "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+        )
         self.end_headers()
         self.wfile.write(body)
 
@@ -656,7 +792,16 @@ class Handler(BaseHTTPRequestHandler):
                     self._json({"error": summary.get("error", "Dataset inválido.")}, 422)
                     return
                 os.replace(temporary, destination)
-                self._json({"dataset": {"id": destination.relative_to(TRAINER_DIR).as_posix(), "name": filename}, "validation": summary}, 201)
+                self._json(
+                    {
+                        "dataset": {
+                            "id": destination.relative_to(TRAINER_DIR).as_posix(),
+                            "name": filename,
+                        },
+                        "validation": summary,
+                    },
+                    201,
+                )
                 return
             if path == "/api/actions":
                 payload = self._read_json()

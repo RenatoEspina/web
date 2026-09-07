@@ -5,101 +5,129 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>LLM Bridge · Fine-tuning local</title>
   <style>
-    :root{color-scheme:dark;--bg:#090b0c;--panel:#111416;--line:#2a3034;--text:#f1f3f4;--muted:#99a1a7;--good:#4ade80;--bad:#fb7185;--accent:#34d399}*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at 20% 0,#13211b 0,transparent 28%),var(--bg);color:var(--text);font:14px/1.5 Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}button,input,select{font:inherit}.wrap{width:min(1180px,calc(100% - 32px));margin:0 auto;padding:32px 0 56px}.top{display:flex;justify-content:space-between;gap:20px;align-items:flex-start;margin-bottom:24px}.eyebrow{text-transform:uppercase;letter-spacing:.16em;color:var(--accent);font-size:11px;font-weight:700}.title{font-size:30px;line-height:1.15;margin:5px 0 7px}.subtitle{margin:0;color:var(--muted);max-width:760px}.badges{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}.badge{border:1px solid var(--line);background:#0d1011;border-radius:999px;padding:5px 9px;font-size:12px;color:#c9ced1}.badge.good{border-color:#225c3d;color:#8ff0b6}.grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}.card{background:linear-gradient(180deg,#121618,#0f1214);border:1px solid var(--line);border-radius:16px;padding:18px;box-shadow:0 18px 44px #0005}.card.wide{grid-column:1/-1}.card h2{font-size:17px;margin:0 0 4px}.card p.help{margin:0 0 16px;color:var(--muted)}.row{display:flex;gap:10px;align-items:end;flex-wrap:wrap}.field{display:grid;gap:6px;flex:1;min-width:150px}.field label{font-size:12px;color:#c8ced2}.input,.select{width:100%;border:1px solid var(--line);background:#0b0e0f;color:var(--text);border-radius:10px;padding:10px 11px;outline:none}.input:focus,.select:focus{border-color:#397b5b;box-shadow:0 0 0 3px #16472d55}.btn{border:1px solid #335c47;background:#143525;color:#dff9e9;border-radius:10px;padding:10px 13px;cursor:pointer;font-weight:650}.btn:hover{background:#19432e}.btn.secondary{border-color:var(--line);background:#171b1d;color:#e4e7e9}.btn.danger{border-color:#6b2a33;background:#33171b;color:#ffd6dc}.btn:disabled{opacity:.5;cursor:not-allowed}.drop{border:1px dashed #3a4a42;border-radius:12px;padding:14px;background:#0c100e}.drop input{width:100%}.summary{margin-top:12px;border-radius:10px;padding:10px 12px;background:#0d1711;border:1px solid #214c34;color:#a7efc1}.error{margin-top:12px;border-radius:10px;padding:10px 12px;background:#261216;border:1px solid #66232e;color:#ffb2bd}.advanced{margin-top:14px;border-top:1px solid var(--line);padding-top:12px}.advanced summary{cursor:pointer;color:#cbd1d4}.advanced .row{margin-top:12px}.actions{display:flex;gap:9px;flex-wrap:wrap;margin-top:14px}.adapters{display:grid;gap:9px;margin-top:12px}.adapter{display:flex;justify-content:space-between;gap:14px;align-items:center;border:1px solid var(--line);background:#0b0e0f;border-radius:11px;padding:11px}.adapter strong{display:block}.meta{font-size:12px;color:var(--muted)}.logbar{display:flex;justify-content:space-between;gap:12px;align-items:center;margin-bottom:10px}.log{margin:0;min-height:220px;max-height:420px;overflow:auto;white-space:pre-wrap;word-break:break-word;background:#050607;border:1px solid #22282b;border-radius:12px;padding:14px;color:#c8f5d8;font:12px/1.55 "SFMono-Regular",Consolas,"Liberation Mono",monospace}.statusline{color:var(--muted);font-size:12px}.footer{display:flex;justify-content:space-between;gap:12px;align-items:center;margin-top:16px;color:var(--muted);font-size:12px}@media(max-width:800px){.grid{grid-template-columns:1fr}.card.wide{grid-column:auto}.top{display:block}.wrap{width:min(100% - 20px,1180px);padding-top:20px}.title{font-size:25px}.adapter{align-items:flex-start;flex-direction:column}}
+    :root{color-scheme:dark;--bg:#090b0c;--panel:#111416;--panel2:#0d1011;--line:#2a3034;--text:#f1f3f4;--muted:#99a1a7;--good:#4ade80;--bad:#fb7185;--accent:#34d399;--accent-dim:#153b2a}*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at 20% 0,#13211b 0,transparent 28%),var(--bg);color:var(--text);font:14px/1.5 Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}button,input,select{font:inherit}.wrap{width:min(1320px,calc(100% - 32px));margin:0 auto;padding:28px 0 48px}.top{display:flex;justify-content:space-between;gap:20px;align-items:flex-start;margin-bottom:20px}.eyebrow{text-transform:uppercase;letter-spacing:.16em;color:var(--accent);font-size:11px;font-weight:700}.title{font-size:30px;line-height:1.15;margin:5px 0 7px}.subtitle{margin:0;color:var(--muted);max-width:820px}.badges{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}.badge{border:1px solid var(--line);background:#0d1011;border-radius:999px;padding:5px 9px;font-size:12px;color:#c9ced1}.badge.good{border-color:#225c3d;color:#8ff0b6}.stepper{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-bottom:16px}.step-button{position:relative;display:grid;grid-template-columns:auto 1fr;gap:9px;align-items:center;text-align:left;border:1px solid var(--line);background:#0d1011;color:#adb5ba;border-radius:12px;padding:10px 12px;cursor:pointer}.step-button:hover{border-color:#3b494f}.step-button.active{border-color:#397b5b;background:#102219;color:#e9fff1}.step-button.done{border-color:#24553c}.step-number{display:grid;place-items:center;width:26px;height:26px;border-radius:50%;background:#171b1d;border:1px solid var(--line);font-size:12px;font-weight:750}.step-button.active .step-number,.step-button.done .step-number{background:var(--accent-dim);border-color:#397b5b;color:#a8f5c6}.step-label{display:grid;line-height:1.2}.step-label strong{font-size:12px}.step-label span{font-size:10px;color:var(--muted);margin-top:2px}.progress{height:3px;background:#171b1d;border-radius:999px;overflow:hidden;margin:-7px 0 18px}.progress>span{display:block;height:100%;width:20%;background:var(--accent);transition:width .2s ease}.workspace{display:grid;grid-template-columns:minmax(0,1.05fr) minmax(360px,.8fr);gap:16px;align-items:start}.card{background:linear-gradient(180deg,#121618,#0f1214);border:1px solid var(--line);border-radius:16px;padding:18px;box-shadow:0 18px 44px #0005}.stage{min-height:520px}.stage-head{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;border-bottom:1px solid var(--line);padding-bottom:14px;margin-bottom:16px}.stage-index{font-size:12px;color:var(--accent);font-weight:700;text-transform:uppercase;letter-spacing:.08em}.stage h2,.terminal h2{font-size:19px;margin:2px 0 4px}.help{margin:0;color:var(--muted)}.step-panel{display:none}.step-panel.active{display:block}.row{display:flex;gap:10px;align-items:end;flex-wrap:wrap}.field{display:grid;gap:6px;flex:1;min-width:150px}.field label{font-size:12px;color:#c8ced2}.input,.select{width:100%;border:1px solid var(--line);background:#0b0e0f;color:var(--text);border-radius:10px;padding:10px 11px;outline:none}.input:focus,.select:focus{border-color:#397b5b;box-shadow:0 0 0 3px #16472d55}.btn{border:1px solid #335c47;background:#143525;color:#dff9e9;border-radius:10px;padding:10px 13px;cursor:pointer;font-weight:650}.btn:hover{background:#19432e}.btn.secondary{border-color:var(--line);background:#171b1d;color:#e4e7e9}.btn.danger{border-color:#6b2a33;background:#33171b;color:#ffd6dc}.btn:disabled{opacity:.5;cursor:not-allowed}.drop{border:1px dashed #3a4a42;border-radius:12px;padding:14px;background:#0c100e}.drop input{width:100%}.summary{margin-top:12px;border-radius:10px;padding:10px 12px;background:#0d1711;border:1px solid #214c34;color:#a7efc1}.notice{margin-top:12px;border-radius:10px;padding:10px 12px;background:#111719;border:1px solid #29363a;color:#c4ccd0}.error{margin-top:12px;border-radius:10px;padding:10px 12px;background:#261216;border:1px solid #66232e;color:#ffb2bd}.advanced{margin-top:14px;border-top:1px solid var(--line);padding-top:12px}.advanced summary{cursor:pointer;color:#cbd1d4}.advanced .row{margin-top:12px}.actions{display:flex;gap:9px;flex-wrap:wrap;margin-top:14px}.adapters{display:grid;gap:9px;margin-top:12px}.adapter{display:flex;justify-content:space-between;gap:14px;align-items:center;border:1px solid var(--line);background:#0b0e0f;border-radius:11px;padding:11px}.adapter strong{display:block}.meta{font-size:12px;color:var(--muted)}.wizard-nav{display:flex;justify-content:space-between;gap:10px;border-top:1px solid var(--line);padding-top:16px;margin-top:22px}.terminal{position:sticky;top:16px;padding:0;overflow:hidden}.terminal-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;padding:16px 16px 12px;border-bottom:1px solid var(--line)}.terminal-head .statusline{margin-top:3px}.terminal-actions{display:flex;gap:8px}.log{margin:0;min-height:455px;max-height:68vh;overflow:auto;white-space:pre-wrap;word-break:break-word;background:#050607;padding:14px 16px;color:#c8f5d8;font:12px/1.55 "SFMono-Regular",Consolas,"Liberation Mono",monospace}.statusline{color:var(--muted);font-size:12px}.footer{display:flex;justify-content:space-between;gap:12px;align-items:center;margin-top:16px;color:var(--muted);font-size:12px}.secret-note{font-size:11px;color:var(--muted)}code{color:#bbf7d0}.training-token{margin-top:14px;padding-top:14px;border-top:1px solid var(--line)}@media(max-width:1000px){.workspace{grid-template-columns:1fr}.terminal{position:static}.log{min-height:260px;max-height:420px}.step-label span{display:none}}@media(max-width:720px){.wrap{width:min(100% - 20px,1320px);padding-top:18px}.top{display:block}.top>.btn{margin-top:14px}.title{font-size:25px}.stepper{grid-template-columns:repeat(5,minmax(48px,1fr));gap:5px}.step-button{display:grid;place-items:center;padding:8px 4px;text-align:center}.step-label strong{display:none}.step-label span{display:none}.stage{min-height:auto}.stage-head{display:block}.adapter{align-items:flex-start;flex-direction:column}.wizard-nav .btn{flex:1}.terminal-actions{display:block}.terminal-actions .btn{width:100%}}
   </style>
 </head>
 <body>
   <main class="wrap">
     <header class="top">
       <div>
-        <div class="eyebrow">QLoRA · SFT · panel de control</div>
+        <div class="eyebrow">QLoRA · SFT · asistente local</div>
         <h1 class="title">Fine-tuning local</h1>
-        <p class="subtitle">Sube y valida el dataset, prepara CUDA, entrena el adaptador y cárgalo en vLLM sin copiar comandos manualmente. Este servidor escucha únicamente en loopback.</p>
+        <p class="subtitle">Flujo guiado paso a paso. Configura únicamente el paso actual mientras la terminal permanece visible para seguir preparación, descargas y entrenamiento en tiempo real.</p>
         <div class="badges"><span class="badge good">Solo esta máquina</span><span class="badge">Python 3.14 compatible</span><span class="badge" id="envBadge">Entorno: comprobando…</span><span class="badge" id="vllmBadge">vLLM: comprobando…</span></div>
       </div>
       <button class="btn secondary" id="shutdownBtn">Cerrar panel</button>
     </header>
 
-    <section class="grid">
-      <article class="card">
-        <h2>1. Entorno</h2>
-        <p class="help">La GUI puede crear o actualizar <code>trainer/.venv</code>, instalar las versiones fijadas y comprobar CUDA/NF4.</p>
-        <div class="statusline" id="envStatus">Consultando estado local…</div>
-        <div class="summary">El entrenamiento verifica las dependencias antes de cargar el modelo y sincroniza automáticamente un entorno desactualizado. <code>datasets 4.8.5</code> evita el fallo de fingerprint observado con Python 3.14.</div>
-        <div class="actions"><button class="btn" id="setupBtn">Preparar / actualizar entorno</button><button class="btn secondary" id="checkBtn">Comprobar GPU</button></div>
+    <nav class="stepper" aria-label="Pasos de fine-tuning">
+      <button class="step-button active" type="button" data-step="0"><span class="step-number">1</span><span class="step-label"><strong>Entorno</strong><span>Preparar CUDA</span></span></button>
+      <button class="step-button" type="button" data-step="1"><span class="step-number">2</span><span class="step-label"><strong>Dataset</strong><span>Subir y validar</span></span></button>
+      <button class="step-button" type="button" data-step="2"><span class="step-number">3</span><span class="step-label"><strong>Entrenamiento</strong><span>Configurar QLoRA</span></span></button>
+      <button class="step-button" type="button" data-step="3"><span class="step-number">4</span><span class="step-label"><strong>vLLM</strong><span>Administrar engine</span></span></button>
+      <button class="step-button" type="button" data-step="4"><span class="step-number">5</span><span class="step-label"><strong>Adaptadores</strong><span>Cargar LoRA</span></span></button>
+    </nav>
+    <div class="progress" aria-hidden="true"><span id="progressBar"></span></div>
+
+    <section class="workspace">
+      <article class="card stage">
+        <div class="stage-head">
+          <div><div class="stage-index" id="stageIndex">Paso 1 de 5</div><h2 id="stageTitle">Preparar entorno</h2><p class="help" id="stageHelp">Crea o actualiza el entorno y comprueba la GPU antes de continuar.</p></div>
+        </div>
+
+        <section class="step-panel active" data-panel="0">
+          <p class="help">La GUI puede crear o actualizar <code>trainer/.venv</code>, instalar las versiones fijadas y comprobar CUDA/NF4.</p>
+          <div class="statusline" id="envStatus">Consultando estado local…</div>
+          <div class="summary">El entrenamiento verifica las dependencias antes de cargar el modelo y sincroniza automáticamente un entorno desactualizado. <code>datasets 4.8.5</code> evita el fallo de fingerprint observado con Python 3.14.</div>
+          <div class="actions"><button class="btn" id="setupBtn">Preparar / actualizar entorno</button><button class="btn secondary" id="checkBtn">Comprobar GPU</button></div>
+        </section>
+
+        <section class="step-panel" data-panel="1">
+          <p class="help">Formato JSONL conversacional. Los archivos subidos se guardan en <code>trainer/datasets/</code> y se validan antes de aparecer en el catálogo.</p>
+          <div class="drop"><input id="datasetFile" type="file" accept=".jsonl,application/json" /></div>
+          <div class="field" style="margin-top:12px"><label for="datasetSelect">Dataset seleccionado</label><select class="select" id="datasetSelect"><option value="">Ninguno</option></select></div>
+          <div id="datasetMessage"></div>
+        </section>
+
+        <section class="step-panel" data-panel="2">
+          <p class="help">Configura el adaptador y los hiperparámetros. La ejecución y sus logs permanecen separados en la terminal de la derecha.</p>
+          <form id="trainForm">
+            <div class="row">
+              <div class="field"><label for="adapterName">Nombre del adaptador</label><input class="input" id="adapterName" value="qwen-es-v1" pattern="[A-Za-z0-9][A-Za-z0-9._-]{0,63}" required /></div>
+              <div class="field"><label for="baseModel">Modelo base</label><input class="input" id="baseModel" value="Qwen/Qwen3.5-0.8B" required /></div>
+              <div class="field"><label for="rank">Rank LoRA</label><select class="select" id="rank"><option>8</option><option selected>16</option><option>32</option></select></div>
+              <div class="field"><label for="epochs">Épocas</label><input class="input" id="epochs" type="number" value="3" min="0.1" max="20" step="0.1" /></div>
+            </div>
+            <div class="training-token">
+              <div class="field"><label for="trainHfToken">HF token para descargas del entrenamiento (opcional)</label><input class="input" id="trainHfToken" type="password" autocomplete="off" spellcheck="false" placeholder="hf_…" /></div>
+              <div class="secret-note">Se usa únicamente durante esta ejecución para autenticar las descargas del modelo desde Hugging Face. No se guarda en archivos ni se muestra en la terminal. No acelera el cálculo de QLoRA una vez cargado el modelo.</div>
+            </div>
+            <details class="advanced"><summary>Parámetros avanzados</summary><div class="row">
+              <div class="field"><label>Alpha</label><input class="input" id="alpha" type="number" value="32" min="1" max="256" /></div>
+              <div class="field"><label>Dropout</label><input class="input" id="dropout" type="number" value="0.05" min="0" max="0.5" step="0.01" /></div>
+              <div class="field"><label>Learning rate</label><input class="input" id="learningRate" type="number" value="0.0002" min="0.0000001" max="0.1" step="any" /></div>
+              <div class="field"><label>Batch</label><input class="input" id="batchSize" type="number" value="1" min="1" max="32" /></div>
+              <div class="field"><label>Gradient accumulation</label><input class="input" id="gradientAccumulation" type="number" value="8" min="1" max="256" /></div>
+              <div class="field"><label>Max length</label><input class="input" id="maxLength" type="number" value="1024" min="128" max="16384" /></div>
+              <div class="field"><label>Seed</label><input class="input" id="seed" type="number" value="42" min="0" /></div>
+            </div></details>
+            <div class="actions"><button class="btn" id="trainBtn" type="submit">Preparar y entrenar</button></div>
+          </form>
+        </section>
+
+        <section class="step-panel" data-panel="3">
+          <p class="help">Inicia o detiene el engine. Este token de Hugging Face también es opcional y solo se usa para el arranque actual de vLLM.</p>
+          <div class="field"><label for="runtimeModel">Modelo base al iniciar</label><input class="input" id="runtimeModel" value="Qwen/Qwen3.5-0.8B" /></div>
+          <div class="field" style="margin-top:10px"><label for="hfToken">HF token opcional para vLLM</label><input class="input" id="hfToken" type="password" autocomplete="off" spellcheck="false" placeholder="hf_…" /></div>
+          <div class="actions"><button class="btn" id="startVllmBtn">Iniciar vLLM</button><button class="btn secondary" id="stopVllmBtn">Detener vLLM</button></div>
+        </section>
+
+        <section class="step-panel" data-panel="4">
+          <p class="help">Carga o descarga LoRA dinámicamente. Solo se aceptan adaptadores generados bajo <code>adapters/</code>.</p>
+          <div class="adapters" id="adapterList"><span class="statusline">No hay adaptadores todavía.</span></div>
+        </section>
+
+        <div class="wizard-nav"><button class="btn secondary" id="prevStepBtn" type="button">Atrás</button><button class="btn" id="nextStepBtn" type="button">Siguiente</button></div>
       </article>
 
-      <article class="card">
-        <h2>2. Dataset</h2>
-        <p class="help">Formato JSONL conversacional. Los archivos subidos se guardan en <code>trainer/datasets/</code>.</p>
-        <div class="drop"><input id="datasetFile" type="file" accept=".jsonl,application/json" /></div>
-        <div class="field" style="margin-top:12px"><label for="datasetSelect">Dataset seleccionado</label><select class="select" id="datasetSelect"><option value="">Ninguno</option></select></div>
-        <div id="datasetMessage"></div>
-      </article>
-
-      <article class="card wide">
-        <h2>3. Entrenamiento</h2>
-        <p class="help">Un solo botón valida y sincroniza el entorno, detiene vLLM si ocupa la GPU, ejecuta SFT + QLoRA y vuelve a iniciarlo si estaba activo.</p>
-        <form id="trainForm">
-          <div class="row">
-            <div class="field"><label for="adapterName">Nombre del adaptador</label><input class="input" id="adapterName" value="qwen-es-v1" pattern="[A-Za-z0-9][A-Za-z0-9._-]{0,63}" required /></div>
-            <div class="field"><label for="baseModel">Modelo base</label><input class="input" id="baseModel" value="Qwen/Qwen3.5-0.8B" required /></div>
-            <div class="field"><label for="rank">Rank LoRA</label><select class="select" id="rank"><option>8</option><option selected>16</option><option>32</option></select></div>
-            <div class="field"><label for="epochs">Épocas</label><input class="input" id="epochs" type="number" value="3" min="0.1" max="20" step="0.1" /></div>
-          </div>
-          <details class="advanced"><summary>Parámetros avanzados</summary><div class="row">
-            <div class="field"><label>Alpha</label><input class="input" id="alpha" type="number" value="32" min="1" max="256" /></div>
-            <div class="field"><label>Dropout</label><input class="input" id="dropout" type="number" value="0.05" min="0" max="0.5" step="0.01" /></div>
-            <div class="field"><label>Learning rate</label><input class="input" id="learningRate" type="number" value="0.0002" min="0.0000001" max="0.1" step="any" /></div>
-            <div class="field"><label>Batch</label><input class="input" id="batchSize" type="number" value="1" min="1" max="32" /></div>
-            <div class="field"><label>Gradient accumulation</label><input class="input" id="gradientAccumulation" type="number" value="8" min="1" max="256" /></div>
-            <div class="field"><label>Max length</label><input class="input" id="maxLength" type="number" value="1024" min="128" max="16384" /></div>
-            <div class="field"><label>Seed</label><input class="input" id="seed" type="number" value="42" min="0" /></div>
-          </div></details>
-          <div class="actions"><button class="btn" id="trainBtn" type="submit">Preparar y entrenar</button></div>
-        </form>
-      </article>
-
-      <article class="card">
-        <h2>4. vLLM</h2>
-        <p class="help">Inicia o detiene el engine desde aquí. El token de Hugging Face es opcional para modelos públicos y no se guarda.</p>
-        <div class="field"><label for="runtimeModel">Modelo base al iniciar</label><input class="input" id="runtimeModel" value="Qwen/Qwen3.5-0.8B" /></div>
-        <div class="field" style="margin-top:10px"><label for="hfToken">HF token opcional</label><input class="input" id="hfToken" type="password" autocomplete="off" placeholder="hf_…" /></div>
-        <div class="actions"><button class="btn" id="startVllmBtn">Iniciar vLLM</button><button class="btn secondary" id="stopVllmBtn">Detener vLLM</button></div>
-      </article>
-
-      <article class="card">
-        <h2>5. Adaptadores</h2>
-        <p class="help">Carga o descarga LoRA dinámicamente. Solo se aceptan adaptadores generados bajo <code>adapters/</code>.</p>
-        <div class="adapters" id="adapterList"><span class="statusline">No hay adaptadores todavía.</span></div>
-      </article>
-
-      <article class="card wide">
-        <div class="logbar"><div><h2>Actividad</h2><div class="statusline" id="jobStatus">Sin operaciones en curso.</div></div><button class="btn danger" id="cancelBtn" disabled>Cancelar operación</button></div>
-        <pre class="log" id="log">El log del setup y entrenamiento aparecerá aquí.</pre>
-      </article>
+      <aside class="card terminal" aria-label="Terminal de actividad">
+        <div class="terminal-head"><div><div class="stage-index">Terminal / logs</div><h2>Actividad</h2><div class="statusline" id="jobStatus">Sin operaciones en curso.</div></div><div class="terminal-actions"><button class="btn danger" id="cancelBtn" disabled>Cancelar</button></div></div>
+        <pre class="log" id="log">La preparación del entorno, descargas y entrenamiento aparecerán aquí.</pre>
+      </aside>
     </section>
+
     <div class="footer"><span>LLM Bridge · controlador local de fine-tuning</span><span id="globalMessage"></span></div>
   </main>
 
   <script>
-    let token="", currentStatus=null, selectedDataset="", lastJobId="";
+    let token="", currentStatus=null, selectedDataset="", lastJobId="", currentStep=0;
     const $=id=>document.getElementById(id);
+    const stepMeta=[
+      ["Preparar entorno","Crea o actualiza el entorno y comprueba la GPU antes de continuar."],
+      ["Seleccionar dataset","Sube, valida y selecciona los ejemplos que usarás para SFT."],
+      ["Configurar entrenamiento","Define QLoRA, modelo base y autenticación opcional de Hugging Face."],
+      ["Administrar vLLM","Inicia o detiene el engine local después del entrenamiento."],
+      ["Administrar adaptadores","Carga o descarga adaptadores LoRA disponibles en el runtime."]
+    ];
     async function request(path,options={}){const headers={...(options.headers||{})};if(options.method&&options.method!=="GET")headers["X-Fine-Tune-Token"]=token;const response=await fetch(path,{...options,headers});let data={};try{data=await response.json()}catch{}if(!response.ok)throw new Error(data.error||`HTTP ${response.status}`);return data}
     function setMessage(text,bad=false){$("globalMessage").textContent=text||"";$("globalMessage").style.color=bad?"var(--bad)":"var(--muted)"}
     function setBusy(running){for(const id of["setupBtn","checkBtn","trainBtn","startVllmBtn","stopVllmBtn"])$(id).disabled=running;$("cancelBtn").disabled=!running}
     function escapeHtml(value){return String(value??"").replace(/[&<>'"]/g,char=>({"&":"&amp;","<":"&lt;",">":"&gt;","'":"&#39;",'"':"&quot;"}[char]))}
-    function renderStatus(status){currentStatus=status;$("envBadge").textContent=status.environmentReady?"Entorno: listo":"Entorno: pendiente";$("envBadge").className=`badge ${status.environmentReady?"good":""}`;$("vllmBadge").textContent=status.vllmRunning?`vLLM: activo (${status.vllmModels.length} modelo${status.vllmModels.length===1?"":"s"})`:"vLLM: detenido";$("vllmBadge").className=`badge ${status.vllmRunning?"good":""}`;$("envStatus").textContent=`venv ${status.environmentReady?"disponible":"no creado"} · Docker ${status.dockerCli?"detectado":"no detectado"} · Bash ${status.bashCli?"detectado":"no detectado"}`;const select=$("datasetSelect"),previous=selectedDataset||select.value;select.innerHTML='<option value="">Ninguno</option>'+status.datasets.map(d=>`<option value="${escapeHtml(d.id)}">${escapeHtml(d.kind)} · ${escapeHtml(d.name)} · ${(d.bytes/1024).toFixed(1)} KiB</option>`).join("");if(status.datasets.some(d=>d.id===previous))select.value=previous;selectedDataset=select.value;const loaded=new Set(status.vllmModels||[]),list=$("adapterList");if(!status.adapters.length)list.innerHTML='<span class="statusline">No hay adaptadores todavía.</span>';else list.innerHTML=status.adapters.map(a=>{const isLoaded=loaded.has(a.name),meta=[a.baseModel,a.examples?`${a.examples} ejemplos`:"",a.rank?`rank ${a.rank}`:""].filter(Boolean).join(" · ");return `<div class="adapter"><div><strong>${escapeHtml(a.name)}</strong><span class="meta">${escapeHtml(meta||"manifest disponible")}</span></div><button class="btn ${isLoaded?"secondary":""}" data-adapter="${escapeHtml(a.name)}" data-action="${isLoaded?"unload-adapter":"load-adapter"}">${isLoaded?"Descargar de vLLM":"Cargar en vLLM"}</button></div>`}).join("");list.querySelectorAll("button[data-adapter]").forEach(button=>button.addEventListener("click",()=>startAction(button.dataset.action,{name:button.dataset.adapter})));renderJob(status.job)}
-    function renderJob(job){const running=job?.status==="running";setBusy(running);if(!job){$("jobStatus").textContent="Sin operaciones en curso.";return}const names={setup:"Preparando entorno",check:"Comprobando GPU",train:"Entrenando adaptador","start-vllm":"Iniciando vLLM","stop-vllm":"Deteniendo vLLM","load-adapter":"Cargando adaptador","unload-adapter":"Descargando adaptador"};$("jobStatus").textContent=`${names[job.action]||job.action} · ${job.status}`;const log=$("log"),text=(job.logs||[]).join("\n")||"Operación iniciada…";if(job.id!==lastJobId||log.textContent!==text){log.textContent=text;log.scrollTop=log.scrollHeight}lastJobId=job.id;if(job.status==="succeeded")setMessage("Operación completada.");if(job.status==="failed")setMessage("La operación terminó con error. Revisa el log.",true);if(job.status==="cancelled")setMessage("Operación cancelada.")}
+    function stepDone(index){if(index===0)return Boolean(currentStatus?.environmentReady);if(index===1)return Boolean(selectedDataset);if(index===2)return currentStatus?.job?.action==="train"&&currentStatus.job.status==="succeeded";if(index===3)return Boolean(currentStatus?.vllmRunning);if(index===4)return Boolean(currentStatus?.adapters?.length);return false}
+    function showStep(index){currentStep=Math.max(0,Math.min(stepMeta.length-1,index));document.querySelectorAll(".step-panel").forEach(panel=>panel.classList.toggle("active",Number(panel.dataset.panel)===currentStep));document.querySelectorAll(".step-button").forEach(button=>{const value=Number(button.dataset.step);button.classList.toggle("active",value===currentStep);button.classList.toggle("done",value!==currentStep&&stepDone(value));button.setAttribute("aria-current",value===currentStep?"step":"false")});$("stageIndex").textContent=`Paso ${currentStep+1} de ${stepMeta.length}`;$("stageTitle").textContent=stepMeta[currentStep][0];$("stageHelp").textContent=stepMeta[currentStep][1];$("progressBar").style.width=`${((currentStep+1)/stepMeta.length)*100}%`;$("prevStepBtn").disabled=currentStep===0;$("nextStepBtn").textContent=currentStep===stepMeta.length-1?"Volver al inicio":"Siguiente"}
+    function renderStatus(status){currentStatus=status;$("envBadge").textContent=status.environmentReady?"Entorno: listo":"Entorno: pendiente";$("envBadge").className=`badge ${status.environmentReady?"good":""}`;$("vllmBadge").textContent=status.vllmRunning?`vLLM: activo (${status.vllmModels.length} modelo${status.vllmModels.length===1?"":"s"})`:"vLLM: detenido";$("vllmBadge").className=`badge ${status.vllmRunning?"good":""}`;$("envStatus").textContent=`venv ${status.environmentReady?"disponible":"no creado"} · Docker ${status.dockerCli?"detectado":"no detectado"} · Bash ${status.bashCli?"detectado":"no detectado"}`;const select=$("datasetSelect"),previous=selectedDataset||select.value;select.innerHTML='<option value="">Ninguno</option>'+status.datasets.map(d=>`<option value="${escapeHtml(d.id)}">${escapeHtml(d.kind)} · ${escapeHtml(d.name)} · ${(d.bytes/1024).toFixed(1)} KiB</option>`).join("");if(status.datasets.some(d=>d.id===previous))select.value=previous;selectedDataset=select.value;const loaded=new Set(status.vllmModels||[]),list=$("adapterList");if(!status.adapters.length)list.innerHTML='<span class="statusline">No hay adaptadores todavía.</span>';else list.innerHTML=status.adapters.map(a=>{const isLoaded=loaded.has(a.name),meta=[a.baseModel,a.examples?`${a.examples} ejemplos`:"",a.rank?`rank ${a.rank}`:""].filter(Boolean).join(" · ");return `<div class="adapter"><div><strong>${escapeHtml(a.name)}</strong><span class="meta">${escapeHtml(meta||"manifest disponible")}</span></div><button class="btn ${isLoaded?"secondary":""}" data-adapter="${escapeHtml(a.name)}" data-action="${isLoaded?"unload-adapter":"load-adapter"}">${isLoaded?"Descargar de vLLM":"Cargar en vLLM"}</button></div>`}).join("");list.querySelectorAll("button[data-adapter]").forEach(button=>button.addEventListener("click",()=>startAction(button.dataset.action,{name:button.dataset.adapter})));renderJob(status.job);showStep(currentStep)}
+    function renderJob(job){const running=job?.status==="running";setBusy(running);if(!job){$("jobStatus").textContent="Sin operaciones en curso.";return}const names={setup:"Preparando entorno",check:"Comprobando GPU",train:"Entrenando adaptador","start-vllm":"Iniciando vLLM","stop-vllm":"Deteniendo vLLM","load-adapter":"Cargando adaptador","unload-adapter":"Descargando adaptador"};$("jobStatus").textContent=`${names[job.action]||job.action} · ${job.status}`;const log=$("log"),text=(job.logs||[]).join("\n")||"Operación iniciada…";if(job.id!==lastJobId||log.textContent!==text){log.textContent=text;log.scrollTop=log.scrollHeight}lastJobId=job.id;if(job.status==="succeeded")setMessage("Operación completada.");if(job.status==="failed")setMessage("La operación terminó con error. Revisa la terminal.",true);if(job.status==="cancelled")setMessage("Operación cancelada.")}
     async function refresh(){try{renderStatus(await request("/api/status"))}catch(error){setMessage(error.message,true)}}
     async function startAction(action,payload={}){try{setMessage("Iniciando operación…");const data=await request("/api/actions",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action,...payload})});renderJob(data.job)}catch(error){setMessage(error.message,true)}}
-    $("datasetSelect").addEventListener("change",event=>{selectedDataset=event.target.value});
-    $("datasetFile").addEventListener("change",async event=>{const file=event.target.files?.[0];if(!file)return;if(file.size>25*1024*1024){$("datasetMessage").innerHTML='<div class="error">El archivo supera 25 MB.</div>';return}try{$("datasetMessage").innerHTML='<div class="summary">Validando y guardando…</div>';const data=await request("/api/datasets",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({filename:file.name,content:await file.text()})});selectedDataset=data.dataset.id;const v=data.validation;$("datasetMessage").innerHTML=`<div class="summary">Válido: ${v.examples} ejemplos · ${v.messages} mensajes · ${Number(v.characters).toLocaleString("es-CL")} caracteres</div>`;await refresh();$("datasetSelect").value=selectedDataset}catch(error){$("datasetMessage").innerHTML=`<div class="error">${escapeHtml(error.message)}</div>`}});
+    document.querySelectorAll(".step-button").forEach(button=>button.addEventListener("click",()=>showStep(Number(button.dataset.step))));
+    $("prevStepBtn").addEventListener("click",()=>showStep(currentStep-1));$("nextStepBtn").addEventListener("click",()=>showStep(currentStep===stepMeta.length-1?0:currentStep+1));
+    $("datasetSelect").addEventListener("change",event=>{selectedDataset=event.target.value;showStep(currentStep)});
+    $("datasetFile").addEventListener("change",async event=>{const file=event.target.files?.[0];if(!file)return;if(file.size>25*1024*1024){$("datasetMessage").innerHTML='<div class="error">El archivo supera 25 MB.</div>';return}try{$("datasetMessage").innerHTML='<div class="summary">Validando y guardando…</div>';const data=await request("/api/datasets",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({filename:file.name,content:await file.text()})});selectedDataset=data.dataset.id;const v=data.validation;$("datasetMessage").innerHTML=`<div class="summary">Válido: ${v.examples} ejemplos · ${v.messages} mensajes · ${Number(v.characters).toLocaleString("es-CL")} caracteres</div>`;await refresh();$("datasetSelect").value=selectedDataset;showStep(currentStep)}catch(error){$("datasetMessage").innerHTML=`<div class="error">${escapeHtml(error.message)}</div>`}});
     $("setupBtn").addEventListener("click",()=>startAction("setup"));$("checkBtn").addEventListener("click",()=>startAction("check"));$("startVllmBtn").addEventListener("click",()=>startAction("start-vllm",{model:$("runtimeModel").value,hfToken:$("hfToken").value}));$("stopVllmBtn").addEventListener("click",()=>startAction("stop-vllm"));
     $("cancelBtn").addEventListener("click",async()=>{try{await request("/api/job/cancel",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"});setMessage("Cancelación solicitada.")}catch(error){setMessage(error.message,true)}});
     $("shutdownBtn").addEventListener("click",async()=>{try{await request("/api/shutdown",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"});document.body.innerHTML='<main class="wrap"><section class="card"><h1>Panel cerrado</h1><p class="help">Puedes cerrar esta pestaña. El servidor local se ha detenido.</p></section></main>'}catch(error){setMessage(error.message,true)}});
-    $("trainForm").addEventListener("submit",event=>{event.preventDefault();selectedDataset=$("datasetSelect").value;if(!selectedDataset){setMessage("Selecciona o sube un dataset antes de entrenar.",true);return}startAction("train",{dataset:selectedDataset,name:$("adapterName").value,model:$("baseModel").value,rank:Number($("rank").value),epochs:Number($("epochs").value),alpha:Number($("alpha").value),dropout:Number($("dropout").value),learningRate:Number($("learningRate").value),batchSize:Number($("batchSize").value),gradientAccumulation:Number($("gradientAccumulation").value),maxLength:Number($("maxLength").value),seed:Number($("seed").value)})});
-    async function boot(){try{const data=await request("/api/bootstrap");token=data.token;renderStatus(data.status);setInterval(refresh,1800)}catch(error){setMessage(`No se pudo iniciar el panel: ${error.message}`,true)}}boot();
+    $("trainForm").addEventListener("submit",event=>{event.preventDefault();selectedDataset=$("datasetSelect").value;if(!selectedDataset){setMessage("Selecciona o sube un dataset antes de entrenar.",true);showStep(1);return}startAction("train",{dataset:selectedDataset,name:$("adapterName").value,model:$("baseModel").value,hfToken:$("trainHfToken").value,rank:Number($("rank").value),epochs:Number($("epochs").value),alpha:Number($("alpha").value),dropout:Number($("dropout").value),learningRate:Number($("learningRate").value),batchSize:Number($("batchSize").value),gradientAccumulation:Number($("gradientAccumulation").value),maxLength:Number($("maxLength").value),seed:Number($("seed").value)})});
+    async function boot(){try{const data=await request("/api/bootstrap");token=data.token;renderStatus(data.status);showStep(0);setInterval(refresh,1800)}catch(error){setMessage(`No se pudo iniciar el panel: ${error.message}`,true)}}boot();
   </script>
 </body>
 </html>

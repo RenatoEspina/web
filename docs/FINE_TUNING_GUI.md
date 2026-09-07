@@ -24,11 +24,30 @@ FINE_TUNE_GUI_PORT=3040 ./fine-tune-gui
 
 La ruta `/fine-tune` de la aplicación principal ya no implementa un segundo flujo de entrenamiento: solo informa cómo abrir esta GUI local.
 
+## Diseño del panel
+
+La interfaz usa un **wizard de cinco pasos**. Solo se muestra la configuración correspondiente al paso actual, mientras una terminal integrada permanece visible en paralelo para seguir las operaciones en tiempo real.
+
+En escritorio:
+
+- panel izquierdo: paso actual y sus controles;
+- panel derecho: terminal/log y cancelación de la operación actual.
+
+En móvil ambos paneles se apilan verticalmente. Los botones **Atrás** y **Siguiente**, además del indicador superior de pasos, permiten navegar sin perder los valores introducidos en formularios anteriores.
+
+Los pasos son:
+
+1. Entorno;
+2. Dataset;
+3. Entrenamiento;
+4. vLLM;
+5. Adaptadores.
+
 ## Flujo recomendado
 
 ### 1. Preparar entorno
 
-Pulsa **Preparar entorno**. La GUI busca Python 3.13 y luego `python3`/`python`, crea `trainer/.venv`, actualiza `pip` e instala `trainer/requirements.txt`.
+Pulsa **Preparar / actualizar entorno**. La GUI busca Python 3.13 y luego `python3`/`python`, crea `trainer/.venv`, actualiza `pip` e instala `trainer/requirements.txt`.
 
 La verificación usa el mismo script que el CLI:
 
@@ -54,7 +73,31 @@ Configura:
 - modelo base;
 - rank LoRA;
 - épocas;
-- opcionalmente alpha, dropout, learning rate, batch size, gradient accumulation, longitud máxima y seed.
+- opcionalmente alpha, dropout, learning rate, batch size, gradient accumulation, longitud máxima y seed;
+- opcionalmente un **HF token** para las descargas realizadas por Hugging Face durante esa ejecución.
+
+#### Para qué sirve el HF token
+
+El fine-tuning utiliza Hugging Face porque el modelo base (`Qwen/Qwen3.5-0.8B` por defecto), su configuración, tokenizer y pesos se resuelven mediante `transformers`/`huggingface_hub`.
+
+El token puede ayudar durante la fase de descarga porque:
+
+- autentica las solicitudes al Hub;
+- evita depender de los límites anónimos;
+- permite acceder a repositorios gated o privados cuando la cuenta tiene permiso.
+
+El token **no aumenta los tokens por segundo del entrenamiento** una vez que el modelo ya está cargado en la GPU.
+
+La GUI no guarda ese secreto. El servidor:
+
+1. lo retira del payload de la operación al comenzar;
+2. lo valida;
+3. crea una copia del entorno del proceso hijo;
+4. define únicamente `HF_TOKEN` y `HUGGING_FACE_HUB_TOKEN` en ese entorno;
+5. ejecuta `scripts/train-adapter.sh` con ese entorno;
+6. nunca añade el token a los argumentos de línea de comandos ni a los logs.
+
+Si el campo queda vacío, el flujo continúa de manera anónima como antes.
 
 Al pulsar **Preparar y entrenar**, la GUI:
 
@@ -62,16 +105,17 @@ Al pulsar **Preparar y entrenar**, la GUI:
 2. comprueba CUDA/NF4;
 3. ejecuta `scripts/train-adapter.sh`;
 4. detiene vLLM si estaba activo para liberar GPU;
-5. entrena QLoRA;
-6. vuelve a iniciar vLLM si estaba activo antes del entrenamiento.
+5. descarga el modelo si no está completo en caché, usando el HF token si fue proporcionado;
+6. entrena QLoRA;
+7. vuelve a iniciar vLLM si estaba activo antes del entrenamiento.
 
 El entrenador trabaja primero en un directorio temporal oculto y solo publica `adapters/<nombre>/` después de guardar correctamente pesos, tokenizer y `manifest.json`. Un fallo no deja un adaptador parcial bloqueando el mismo nombre.
 
-Solo se permite una operación pesada simultánea. El trabajo actual se puede cancelar desde la propia página.
+Solo se permite una operación pesada simultánea. El trabajo actual se puede cancelar desde la terminal integrada.
 
 ### 4. Iniciar o detener vLLM
 
-La GUI administra el servicio `vllm` del `docker-compose.yml`. Para modelos gated se puede introducir un token de Hugging Face en el formulario; el panel no lo persiste.
+La GUI administra el servicio `vllm` del `docker-compose.yml`. Para modelos gated se puede introducir un token de Hugging Face en este paso; igual que el token del entrenamiento, no se persiste.
 
 ### 5. Cargar o descargar LoRA
 
@@ -105,6 +149,7 @@ El panel es una herramienta administrativa local:
 - no habilita CORS;
 - los datasets solo provienen de `trainer/datasets/` o `trainer/examples/`;
 - los adaptadores solo se cargan desde `adapters/` y sus nombres se validan;
+- los HF tokens opcionales solo viven en memoria y en el entorno del proceso hijo correspondiente;
 - no existe un endpoint para ejecutar comandos arbitrarios;
 - vLLM continúa publicado en el host únicamente como `127.0.0.1:8000`.
 
