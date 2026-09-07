@@ -6,14 +6,17 @@ export function withKnowledge(
   messages: ChatMessage[],
   context: KnowledgeContext,
 ): ChatMessage[] {
+  const ragHasResults = context.mode === "rag" && context.sources.length > 0 && Boolean(context.text.trim());
   const strategy = context.mode === "rag"
-    ? context.embeddingUsed
-      ? "Se recuperaron fragmentos relevantes mediante RAG híbrido, combinando similitud semántica y coincidencia léxica."
-      : "Se recuperaron fragmentos relevantes mediante RAG léxico."
+    ? ragHasResults
+      ? context.embeddingUsed
+        ? "Se recuperaron fragmentos relevantes mediante RAG híbrido, combinando similitud semántica y coincidencia léxica."
+        : "Se recuperaron fragmentos relevantes mediante RAG léxico."
+      : "Se ejecutó RAG sobre los documentos seleccionados, pero no se recuperaron fragmentos relevantes para esta pregunta."
     : context.truncated
       ? "Se cargó el contexto CAG en orden documental, pero fue truncado por el límite configurado; para recuperar selectivamente usa RAG."
       : "Se cargó el contexto documental completo mediante CAG y se mantuvo estable para reutilizar su prefijo.";
-  const contextText = context.text || "No se encontró texto relevante en los documentos seleccionados.";
+  const contextText = context.text || "No se encontraron fragmentos relevantes en los documentos seleccionados.";
   const systemContent = [
     "Responde en el idioma de la pregunta y sé preciso.",
     strategy,

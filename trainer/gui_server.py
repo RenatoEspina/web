@@ -318,41 +318,6 @@ def wait_for_vllm(job: Job, timeout: int) -> None:
     raise RuntimeError(f"Timeout esperando vLLM después de {timeout} segundos.")
 
 
-def set_adapter_allowed_in_env(name: str, allowed: bool) -> None:
-    env_file = ROOT / ".env.local"
-    try:
-        text = env_file.read_text(encoding="utf-8") if env_file.exists() else ""
-    except OSError as error:
-        raise RuntimeError(f"No fue posible leer {env_file.name}: {error}") from error
-
-    lines = text.splitlines()
-    entry_index = next(
-        (index for index, line in enumerate(lines) if line.startswith("LLM_ADAPTER_MODELS=")),
-        None,
-    )
-    if entry_index is None:
-        if not allowed:
-            return
-        if lines and lines[-1].strip():
-            lines.append("")
-        lines.extend(["# Adaptadores LoRA permitidos por el gateway.", f"LLM_ADAPTER_MODELS={name}"])
-    else:
-        current = [
-            item.strip()
-            for item in lines[entry_index].split("=", 1)[1].split(",")
-            if item.strip()
-        ]
-        if allowed and name not in current:
-            current.append(name)
-        if not allowed:
-            current = [item for item in current if item != name]
-        lines[entry_index] = "LLM_ADAPTER_MODELS=" + ",".join(current)
-
-    temporary = env_file.with_suffix(env_file.suffix + ".tmp")
-    temporary.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
-    os.replace(temporary, env_file)
-
-
 def post_vllm(path: str, payload: dict[str, str]) -> str:
     request = Request(f"http://127.0.0.1:8000{path}", data=json.dumps(payload).encode("utf-8"), headers={"Content-Type": "application/json"}, method="POST")
     try:
@@ -363,6 +328,70 @@ def post_vllm(path: str, payload: dict[str, str]) -> str:
         raise RuntimeError(detail or f"vLLM respondió HTTP {error.code}.") from error
     except URLError as error:
         raise RuntimeError("vLLM no está disponible en 127.0.0.1:8000.") from error
+
+
+def rollback_adapter_runtime(name: str, allowed: bool) -> None:
+    """Revierte en vLLM el cambio que ocurrió antes de actualizar la allowlist."""
+    if allowed:
+        post_vllm("/v1/unload_lora_adapter", {"lora_name": name})
+    else:
+        post_vllm(
+            "/v1/load_lora_adapter",
+            {"lora_name": name, "lora_path": f"/adapters/{name}"},
+        )
+
+
+def set_adapter_allowed_in_env(name: str, allowed: bool, *, rollback_runtime: bool = False) -> None:
+    env_file = ROOT / ".env.local"
+    temporary = env_file.with_suffix(env_file.suffix + ".tmp")
+    try:
+        text = env_file.read_text(encoding="utf-8") if env_file.exists() else ""
+        lines = text.splitlines()
+        entry_index = next(
+            (index for index, line in enumerate(lines) if line.startswith("LLM_ADAPTER_MODELS=")),
+            None,
+        )
+        if entry_index is None:
+            if not allowed:
+                return
+            if lines and lines[-1].strip():
+                lines.append("")
+            lines.extend(["# Adaptadores LoRA permitidos por el gateway.", f"LLM_ADAPTER_MODELS={name}"])
+        else:
+            current = [
+                item.strip()
+                for item in lines[entry_index].split("=", 1)[1].split(",")
+                if item.strip()
+            ]
+            if allowed and name not in current:
+                current.append(name)
+            if not allowed:
+                current = [item for item in current if item != name]
+            lines[entry_index] = "LLM_ADAPTER_MODELS=" + ",".join(current)
+
+        temporary.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+        os.replace(temporary, env_file)
+    except OSError as error:
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            pass
+        if not rollback_runtime:
+            raise RuntimeError(f"No fue posible actualizar {env_file.name}: {error}") from error
+        try:
+            rollback_adapter_runtime(name, allowed)
+        except Exception as rollback_error:
+            raise RuntimeError(
+                f"No fue posible actualizar {env_file.name} y también falló el rollback de vLLM. "
+                f"El estado del adaptador '{name}' puede ser inconsistente y requiere revisión manual. "
+                f"Error de allowlist: {error}. Error de rollback: {rollback_error}"
+            ) from error
+        desired = "cargado" if allowed else "descargado"
+        restored = "descargado" if allowed else "cargado"
+        raise RuntimeError(
+            f"vLLM había dejado el adaptador '{name}' {desired}, pero no fue posible actualizar {env_file.name}. "
+            f"El cambio de vLLM fue revertido y el adaptador quedó {restored}; no se aplicó la operación."
+        ) from error
 
 
 def setup_environment(job: Job, *, automatic: bool = False) -> None:
@@ -439,16 +468,26 @@ def run_action(job: Job, payload: dict[str, Any]) -> None:
             append_log(job, f"Cargando {name} en vLLM...")
             response = post_vllm("/v1/load_lora_adapter", {"lora_name": name, "lora_path": f"/adapters/{name}"})
             append_log(job, response or "Adaptador cargado.")
-            set_adapter_allowed_in_env(name, True)
+            set_adapter_allowed_in_env(name, True, rollback_runtime=True)
             append_log(job, "Adaptador agregado a LLM_ADAPTER_MODELS en .env.local. Si la web ya estaba activa, reiníciala para que relea el entorno.")
-            job.result = {"adapter": name, "loaded": True, "gatewayRegistered": True}
+            job.result = {
+                "adapter": name,
+                "runtimeLoaded": True,
+                "allowlistUpdated": True,
+                "gatewayRestartRequired": True,
+            }
         else:
             append_log(job, f"Descargando {name} de vLLM...")
             response = post_vllm("/v1/unload_lora_adapter", {"lora_name": name})
             append_log(job, response or "Adaptador descargado.")
-            set_adapter_allowed_in_env(name, False)
+            set_adapter_allowed_in_env(name, False, rollback_runtime=True)
             append_log(job, "Adaptador retirado de LLM_ADAPTER_MODELS. Si la web ya estaba activa, reiníciala para que relea el entorno.")
-            job.result = {"adapter": name, "loaded": False, "gatewayRegistered": False}
+            job.result = {
+                "adapter": name,
+                "runtimeLoaded": False,
+                "allowlistUpdated": True,
+                "gatewayRestartRequired": True,
+            }
         return
     raise ValueError("Acción no permitida.")
 
