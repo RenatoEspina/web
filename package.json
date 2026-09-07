@@ -13,7 +13,10 @@
     "tunnel": "cloudflared tunnel --url http://127.0.0.1:3000",
     "tunnel:named": "cloudflared tunnel run llm-bridge",
     "typecheck": "tsc --noEmit",
-    "test": "npm run build && node --test tests/*.test.mjs",
+    "test:node": "node --test tests/*.test.mjs",
+    "test:python": "python -m unittest tests/test_gui_server.py",
+    "test": "npm run build && npm run test:node && npm run test:python",
+    "verify": "npm run lint && npm run typecheck && npm test",
     "lint": "bash scripts/sites-env.sh -- eslint . --ignore-pattern dist --ignore-pattern .next",
     "db:generate": "bash scripts/sites-env.sh -- drizzle-kit generate",
     "dataset:validate": "python trainer/validate_dataset.py"
