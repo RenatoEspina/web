@@ -1,0 +1,736 @@
+{
+  "schema_version": 1,
+  "name": "Terraria ES — corpus inicial curado",
+  "collected_at": "2026-09-07",
+  "license": "CC-BY-NC-SA-4.0",
+  "license_url": "https://creativecommons.org/licenses/by-nc-sa/4.0/",
+  "copyright_url": "https://terraria.wiki.gg/wiki/Terraria_Wiki%3ACopyrights",
+  "attribution": "Colaboradores de Official Terraria Wiki (wiki.gg). Terraria pertenece a Re-Logic.",
+  "scope": "Terraria vanilla, PC moderno, mundos normales salvo indicación. No es un volcado completo ni una instantánea homogénea de un parche.",
+  "method": "Preguntas y respuestas sintéticas en español, parafraseadas a partir de extractos indexados de los artículos oficiales. La consulta directa devolvió HTTP 403; no se eludió el bloqueo. La fecha indica consulta del índice, no la revisión exacta del artículo. No se incluyen imágenes, audio ni diálogos del juego.",
+  "system": "Responde en español sobre Terraria sin mods. Sé breve y preciso. Distingue requisitos de progreso, bioma y versión; si falta contexto necesario, pídelo y no inventes datos.",
+  "split_policy": "Separación por artículo/tema: los cuatro temas de evaluación no se entrenan. No mide memorización de hechos del entrenamiento. No se debe ajustar el modelo repetidamente mirando este conjunto final.",
+  "sources": [
+    {
+      "id": "inicio",
+      "title": "Guide:Getting started",
+      "url": "https://terraria.wiki.gg/wiki/Guide%3AGetting_started",
+      "split": "train",
+      "qa": [
+        [
+          "Acabo de empezar Terraria. ¿Qué hago con la madera?",
+          "Fabrica una Work Bench y plataformas. Si además consigues gel de un slime, puedes fabricar antorchas."
+        ],
+        [
+          "¿Cómo utilizo una estación de fabricación?",
+          "Colócala en el mundo y sitúate cerca. Tener la estación guardada en el inventario no sustituye este paso."
+        ],
+        [
+          "¿Qué precaución debo tomar al bajar a cuevas oscuras?",
+          "Lleva antorchas o barras luminosas y vigila las placas de presión: pueden activar trampas peligrosas."
+        ],
+        [
+          "¿Cómo dejo una salida al excavar un pozo?",
+          "Coloca cuerdas o plataformas a medida que bajas para poder regresar por el mismo camino."
+        ]
+      ]
+    },
+    {
+      "id": "hardmode",
+      "title": "Guide:Getting started with Hardmode",
+      "url": "https://terraria.wiki.gg/wiki/Guide%3AGetting_started_with_Hardmode",
+      "split": "train",
+      "qa": [
+        [
+          "¿Qué activa Hardmode en un mundo normal?",
+          "Derrotar por primera vez al Wall of Flesh. El mundo recibe nuevos enemigos y recursos; Hardmode no se puede desactivar."
+        ],
+        [
+          "¿Qué minerales generan los primeros tres altares destruidos en Hardmode?",
+          "Primero Cobalt o Palladium; después Mythril u Orichalcum; finalmente Adamantite o Titanium."
+        ],
+        [
+          "¿Qué herramienta inicial permite extraer Cobalt o Palladium?",
+          "Una Molten Pickaxe. Con el primer mineral puedes fabricar una herramienta capaz de extraer el siguiente nivel."
+        ],
+        [
+          "¿Qué gano al destruir más altares después de los tres primeros?",
+          "El ciclo se repite y genera más de los mismos tipos de minerales de Hardmode elegidos para ese mundo."
+        ]
+      ]
+    },
+    {
+      "id": "vida",
+      "title": "Life Crystal",
+      "url": "https://terraria.wiki.gg/wiki/Life_Crystal",
+      "split": "train",
+      "qa": [
+        [
+          "¿Cuánta vida máxima añade un Life Crystal?",
+          "Añade 20 puntos de vida máxima de forma permanente y recupera 20 puntos de vida al usarlo."
+        ],
+        [
+          "¿Cuántos Life Crystals hacen falta para pasar de 100 a 400 de vida?",
+          "15 cristales: cada uno añade 20, así que aportan los 300 puntos que faltan."
+        ],
+        [
+          "¿Por qué ya no puedo consumir Life Crystals con 400 de vida máxima?",
+          "400 es el límite de vida máxima que permiten estos cristales. A partir de ese límite necesitas Life Fruits para seguir ampliándola."
+        ],
+        [
+          "¿Dónde busco Life Crystals naturales?",
+          "En la capa Underground y por debajo, salvo el Underworld y el Dungeon. Son relativamente poco comunes."
+        ]
+      ]
+    },
+    {
+      "id": "mana",
+      "title": "Mana Crystal",
+      "url": "https://terraria.wiki.gg/wiki/Mana_Crystal",
+      "split": "train",
+      "qa": [
+        [
+          "¿Cómo fabrico un Mana Crystal?",
+          "Combina 5 Fallen Stars a mano; no necesitas una estación de fabricación."
+        ],
+        [
+          "¿Cuánto aumenta mi maná máximo un Mana Crystal?",
+          "Aumenta el máximo en 20 puntos, hasta el límite permanente de 200 obtenido con estos cristales."
+        ],
+        [
+          "¿Cuántos cristales necesito desde los 20 de maná iniciales?",
+          "9 Mana Crystals para alcanzar 200 de maná máximo."
+        ],
+        [
+          "¿Cuántas Fallen Stars debo reunir para maximizar el maná desde el inicio?",
+          "45 estrellas: necesitas 9 cristales y cada cristal requiere 5 Fallen Stars."
+        ]
+      ]
+    },
+    {
+      "id": "horno",
+      "title": "Furnace",
+      "url": "https://terraria.wiki.gg/wiki/Furnace",
+      "split": "train",
+      "qa": [
+        [
+          "¿Cómo fabrico un Furnace básico?",
+          "En una Work Bench, combina 20 bloques de piedra, 4 de madera y 3 antorchas."
+        ],
+        [
+          "¿Para qué sirve el Furnace?",
+          "Principalmente para convertir minerales en lingotes y fabricar ciertos muebles y materiales."
+        ],
+        [
+          "¿Puedo fundir Hellstone en un Furnace normal?",
+          "No. Hellstone requiere una Hellforge; el Furnace normal sirve para los demás minerales anteriores a Hardmode."
+        ],
+        [
+          "¿La luz de un Furnace cumple el requisito de iluminación de una vivienda?",
+          "No. Aunque emite luz, no cuenta como fuente de iluminación válida para vivienda."
+        ]
+      ]
+    },
+    {
+      "id": "plantera",
+      "title": "Plantera",
+      "url": "https://terraria.wiki.gg/wiki/Plantera",
+      "split": "train",
+      "qa": [
+        [
+          "¿Qué debo derrotar antes de que aparezcan los bulbos de Plantera?",
+          "A los tres jefes mecánicos: The Twins, The Destroyer y Skeletron Prime."
+        ],
+        [
+          "¿Cómo invoco a Plantera cuando ya cumplí los requisitos?",
+          "Destruye un Plantera's Bulb en la Underground Jungle. El bulbo invoca al jefe cerca de ti."
+        ],
+        [
+          "¿Qué objeto de Plantera abre el Jungle Temple?",
+          "La Temple Key que deja Plantera al ser derrotada."
+        ],
+        [
+          "¿Qué ocurre con la propagación de biomas malignos al derrotar a Plantera?",
+          "La velocidad de propagación de Corruption, Crimson y Hallow se reduce a la mitad."
+        ]
+      ]
+    },
+    {
+      "id": "vudu",
+      "title": "Guide Voodoo Doll",
+      "url": "https://terraria.wiki.gg/wiki/Guide_Voodoo_Doll",
+      "split": "train",
+      "qa": [
+        [
+          "¿Qué enemigo deja la Guide Voodoo Doll?",
+          "El Voodoo Demon del Underworld la deja de forma garantizada."
+        ],
+        [
+          "¿Cómo uso la Guide Voodoo Doll para invocar al Wall of Flesh?",
+          "Arrójala a lava en el Underworld mientras el Guide esté vivo. El muñeco se destruye y el Guide muere al invocar al jefe."
+        ],
+        [
+          "¿El Guide debe estar junto a mí cuando tiro el muñeco al Underworld?",
+          "No necesita estar cerca. Sí debe estar vivo."
+        ],
+        [
+          "¿Qué pasa si tiro la Guide Voodoo Doll a lava fuera del Underworld?",
+          "El Guide puede morir, pero no se invocará al Wall of Flesh. La ubicación de la lava importa."
+        ]
+      ]
+    },
+    {
+      "id": "anciano",
+      "title": "Old Man",
+      "url": "https://terraria.wiki.gg/wiki/Old_Man",
+      "split": "train",
+      "qa": [
+        [
+          "¿Dónde encuentro al Old Man?",
+          "En la entrada del Dungeon."
+        ],
+        [
+          "¿Cómo invoco a Skeletron mediante el Old Man?",
+          "Habla con él de noche y elige Curse. Durante el día te pedirá volver por la noche."
+        ],
+        [
+          "¿Es seguro bajar al Dungeon antes de vencer a Skeletron?",
+          "No. Al bajar por debajo del nivel de superficie pueden aparecer Dungeon Guardians que normalmente te matan al contacto."
+        ],
+        [
+          "¿Qué pasa con el Old Man después de vencer a Skeletron?",
+          "Queda liberado de la maldición y puede mudarse como Clothier si hay una casa disponible."
+        ]
+      ]
+    },
+    {
+      "id": "mecanicos",
+      "title": "Mechanical bosses",
+      "url": "https://terraria.wiki.gg/wiki/Mechanical_bosses",
+      "split": "train",
+      "qa": [
+        [
+          "¿Cuáles son los tres jefes mecánicos?",
+          "The Twins, The Destroyer y Skeletron Prime."
+        ],
+        [
+          "¿Qué objetos invocan a los jefes mecánicos?",
+          "Mechanical Eye invoca a The Twins; Mechanical Worm, a The Destroyer; Mechanical Skull, a Skeletron Prime."
+        ],
+        [
+          "¿Qué almas corresponden a cada jefe mecánico?",
+          "The Twins deja Souls of Sight; The Destroyer, Souls of Might; Skeletron Prime, Souls of Fright."
+        ],
+        [
+          "¿En qué estación fabrico los invocadores mecánicos?",
+          "En una Mythril Anvil o una Orichalcum Anvil."
+        ]
+      ]
+    },
+    {
+      "id": "enfermera",
+      "title": "Nurse",
+      "url": "https://terraria.wiki.gg/wiki/Nurse",
+      "split": "train",
+      "qa": [
+        [
+          "¿Qué condiciones necesita la Nurse para mudarse?",
+          "Una casa vacía válida, un jugador con más de 100 de vida máxima y que el Merchant esté presente."
+        ],
+        [
+          "¿Qué servicio ofrece la Nurse?",
+          "Cura tu vida y elimina muchos efectos negativos a cambio de monedas; hay excepciones."
+        ],
+        [
+          "¿Puede la Nurse quitar Potion Sickness?",
+          "No. Potion Sickness es una de las excepciones que la Nurse no elimina."
+        ],
+        [
+          "¿Por qué cambian los precios de la Nurse?",
+          "Dependen de su felicidad, del progreso del mundo y de la dificultad. No existe un precio fijo para toda la partida."
+        ]
+      ]
+    },
+    {
+      "id": "casa",
+      "title": "House",
+      "url": "https://terraria.wiki.gg/wiki/House",
+      "split": "train",
+      "qa": [
+        [
+          "¿Qué tamaño total debe tener una vivienda de NPC?",
+          "Debe ocupar al menos 60 y menos de 750 casillas contando el marco que la rodea."
+        ],
+        [
+          "¿Las paredes naturales de tierra sirven automáticamente como paredes válidas de vivienda?",
+          "No. Las paredes inseguras, como las naturales de tierra, no cuentan como paredes de fondo válidas."
+        ],
+        [
+          "¿Qué puede pasar si dejo huecos en las paredes de fondo de mi casa?",
+          "Pueden permitir la aparición de enemigos dentro. Usa paredes de cristal si quieres una ventana segura."
+        ],
+        [
+          "¿Puedo alojar varios NPC de ciudad en una única casa asignada?",
+          "Cada NPC de ciudad que requiere vivienda necesita su propia casa; construye varias viviendas válidas."
+        ]
+      ]
+    },
+    {
+      "id": "npcs",
+      "title": "NPCs",
+      "url": "https://terraria.wiki.gg/wiki/NPCs",
+      "split": "train",
+      "qa": [
+        [
+          "¿Qué NPC aparece al empezar un mundo normal?",
+          "El Guide. Las semillas especiales pueden cambiar el NPC inicial."
+        ],
+        [
+          "¿Cómo averiguo en qué recetas se usa un material?",
+          "Muéstraselo al Guide mediante su opción de fabricación para consultar las recetas que lo incluyen."
+        ],
+        [
+          "¿Qué requisito de monedas permite que llegue el Merchant?",
+          "Los jugadores deben reunir más de 50 monedas de plata en sus inventarios. Además necesita vivienda disponible."
+        ],
+        [
+          "¿Qué necesito para que llegue el Demolitionist?",
+          "Tener un explosivo en el inventario, que el Merchant esté presente y disponer de una casa válida."
+        ]
+      ]
+    },
+    {
+      "id": "cama",
+      "title": "Beds",
+      "url": "https://terraria.wiki.gg/wiki/Beds",
+      "split": "train",
+      "qa": [
+        [
+          "¿Qué parte de una cama activa el punto de reaparición?",
+          "Interactúa con el extremo de los pies de la cama, colocada en un dormitorio válido."
+        ],
+        [
+          "¿Cómo quito el punto de reaparición de una cama?",
+          "Vuelve a interactuar con los pies de la cama ya asignada. El punto de aparición vuelve al predeterminado del mundo."
+        ],
+        [
+          "¿Qué parte de la cama sirve para dormir?",
+          "La parte de la cabecera. Dormir y fijar el punto de reaparición son interacciones distintas."
+        ],
+        [
+          "¿Cambian las funciones entre los distintos estilos de cama?",
+          "No. Las camas tienen las mismas funciones y cambian principalmente de apariencia."
+        ]
+      ]
+    },
+    {
+      "id": "retorno",
+      "title": "Recall Potion",
+      "url": "https://terraria.wiki.gg/wiki/Recall_Potion",
+      "split": "train",
+      "qa": [
+        [
+          "¿Adónde me lleva una Recall Potion?",
+          "A tu punto de reaparición."
+        ],
+        [
+          "¿Qué ventaja tiene una Recall Potion frente al Magic Mirror en una emergencia?",
+          "Teletransporta más rápido, aunque consume una poción por uso."
+        ],
+        [
+          "¿Dónde puedo encontrar Recall Potions sin fabricarlas?",
+          "En vasijas y cofres; también pueden aparecer como botín adicional poco frecuente de slimes."
+        ],
+        [
+          "¿Cuál es la receta de Recall Potion?",
+          "Bottled Water, Specular Fish y Daybloom, junto a una botella colocada o una estación de alquimia compatible."
+        ]
+      ]
+    },
+    {
+      "id": "espejos",
+      "title": "Magic Mirrors",
+      "url": "https://terraria.wiki.gg/wiki/Magic_Mirrors",
+      "split": "train",
+      "qa": [
+        [
+          "¿Se consume el Magic Mirror al volver a casa?",
+          "No. Tiene usos ilimitados y te devuelve al punto de reaparición tras una animación."
+        ],
+        [
+          "¿El Ice Mirror hace algo distinto del Magic Mirror?",
+          "No. Es una alternativa con la misma función de retorno."
+        ],
+        [
+          "¿Dónde se encuentra el Ice Mirror?",
+          "En Frozen Chests del bioma de hielo."
+        ],
+        [
+          "¿Qué modo entrega un Magic Mirror a los personajes nuevos?",
+          "Journey Mode."
+        ]
+      ]
+    },
+    {
+      "id": "obsidiana",
+      "title": "Obsidian",
+      "url": "https://terraria.wiki.gg/wiki/Obsidian",
+      "split": "train",
+      "qa": [
+        [
+          "¿Cómo se forma la obsidiana?",
+          "Se crea cuando entran en contacto el agua y la lava."
+        ],
+        [
+          "¿La obsidiana se destruye por caer en lava?",
+          "No. La lava no destruye la obsidiana."
+        ],
+        [
+          "¿Cuánta obsidiana requiere un Obsidian Skull y dónde se fabrica?",
+          "20 de obsidiana en un Furnace."
+        ],
+        [
+          "¿Cómo puedo producir bastante obsidiana con agua y lava?",
+          "Coloca un depósito de agua sobre uno de lava y extrae la capa de obsidiana formada para permitir nuevos contactos entre los líquidos."
+        ]
+      ]
+    },
+    {
+      "id": "plantas",
+      "title": "Plants",
+      "url": "https://terraria.wiki.gg/wiki/Plants",
+      "split": "train",
+      "qa": [
+        [
+          "¿Cuánta vida máxima añade una Life Fruit?",
+          "5 puntos por fruta, hasta 500 de vida máxima tras alcanzar 400 con Life Crystals."
+        ],
+        [
+          "¿Dónde crecen Life Fruits en las versiones modernas?",
+          "En la Underground Jungle, después de derrotar al menos a un jefe mecánico."
+        ],
+        [
+          "¿Derrotar a más jefes mecánicos aumenta la velocidad de aparición de Life Fruits?",
+          "No. El tiempo transcurrido puede permitir que crezcan más, pero vencer más mecánicos no aumenta esa tasa."
+        ],
+        [
+          "¿Qué beneficio ofrecen los girasoles cercanos?",
+          "Dan el efecto Happy!, que mejora ligeramente el movimiento y reduce la aparición de enemigos."
+        ]
+      ]
+    },
+    {
+      "id": "inframundo",
+      "title": "Guide:Surviving in the Underworld",
+      "url": "https://terraria.wiki.gg/wiki/Guide%3ASurviving_in_the_Underworld",
+      "split": "train",
+      "qa": [
+        [
+          "¿Qué peligro añade extraer Hellstone?",
+          "Al extraerla libera lava. Prepara protección contra la lava antes de minarla."
+        ],
+        [
+          "¿Qué accesorio evita quemarme al tocar bloques de Hellstone?",
+          "El Obsidian Skull evita la quemadura por contacto con esos bloques; no confundas ese efecto con protección general contra lava."
+        ],
+        [
+          "¿Qué poción ayuda a extraer Hellstone rodeada de lava?",
+          "Obsidian Skin Potion. La guía también propone Lava Charm para facilitar el trabajo."
+        ],
+        [
+          "¿Qué movilidad resulta útil al explorar el Underworld?",
+          "Un buen gancho y accesorios como Cloud in a Bottle o Rocket Boots ayudan a desplazarse entre sus grandes lagos de lava."
+        ]
+      ]
+    },
+    {
+      "id": "movilidad",
+      "title": "Guide:Practical tips",
+      "url": "https://terraria.wiki.gg/wiki/Guide%3APractical_tips",
+      "split": "train",
+      "qa": [
+        [
+          "¿Qué objeto sencillo permite un salto doble?",
+          "Cloud in a Bottle y sus variantes proporcionan un salto adicional."
+        ],
+        [
+          "¿Para qué sirve Gravitation Potion al explorar el cielo?",
+          "Permite explorar Floating Islands controlando la gravedad."
+        ],
+        [
+          "¿Adónde llevan Magic Conch y Demon Conch?",
+          "Magic Conch te lleva a los océanos; Demon Conch te lleva al Underworld."
+        ],
+        [
+          "¿Qué limitación tienen los minecarts como medio de transporte?",
+          "Necesitan Minecart Tracks. Son rápidos, pero el recorrido depende de las vías construidas."
+        ]
+      ]
+    },
+    {
+      "id": "celda",
+      "title": "Lihzahrd Power Cell",
+      "url": "https://terraria.wiki.gg/wiki/Lihzahrd_Power_Cell",
+      "split": "train",
+      "qa": [
+        [
+          "¿Cómo invoco a Golem con una Lihzahrd Power Cell?",
+          "Activa el Lihzahrd Altar con una celda en el inventario, en un mundo Hardmode donde Plantera ya haya sido derrotada."
+        ],
+        [
+          "¿Cuántas Lihzahrd Power Cells consume cada invocación de Golem?",
+          "Una celda por invocación."
+        ],
+        [
+          "¿Dónde consigo Lihzahrd Power Cells de forma garantizada?",
+          "Cada Lihzahrd Chest contiene una celda."
+        ],
+        [
+          "¿Qué enemigos pueden dejar Lihzahrd Power Cells?",
+          "Lihzahrds y Flying Snakes del Jungle Temple, cada uno con una probabilidad del 2%."
+        ]
+      ]
+    },
+    {
+      "id": "sigilo",
+      "title": "Celestial Sigil",
+      "url": "https://terraria.wiki.gg/wiki/Celestial_Sigil",
+      "split": "train",
+      "qa": [
+        [
+          "¿Qué jefe invoca el Celestial Sigil?",
+          "Invoca al Moon Lord tras una cuenta atrás; no aparece instantáneamente."
+        ],
+        [
+          "¿Cuál es la receta moderna de Celestial Sigil?",
+          "12 Solar Fragments, 12 Vortex Fragments, 12 Nebula Fragments y 12 Stardust Fragments en un Ancient Manipulator."
+        ],
+        [
+          "¿Puedo usar Celestial Sigil mientras hay otro jefe vivo?",
+          "No. Una de sus restricciones es que no haya ningún jefe vivo; también tiene otros requisitos de progreso y eventos."
+        ],
+        [
+          "¿Debo esperar a la noche o ir a un bioma concreto para usar Celestial Sigil?",
+          "No. Puede utilizarse a cualquier hora y en cualquier bioma, siempre que se cumplan los demás requisitos."
+        ]
+      ]
+    },
+    {
+      "id": "goblins",
+      "title": "Goblin Army",
+      "url": "https://terraria.wiki.gg/wiki/Goblin_Army",
+      "split": "train",
+      "qa": [
+        [
+          "¿Qué NPC queda disponible después de vencer una Goblin Army?",
+          "Goblin Tinkerer, que ofrece reforja, Tinkerer's Workshop y Rocket Boots."
+        ],
+        [
+          "¿Por qué son peligrosos los Goblin Peons para mi casa?",
+          "Rompen puertas cerradas. Esto puede invalidar la vivienda y quitar un punto de reaparición asociado."
+        ],
+        [
+          "¿Los Goblin Peons pueden romper puertas que ya están abiertas?",
+          "No. Dejar una puerta abierta evita que la rompan, aunque no crea una barrera contra los enemigos."
+        ],
+        [
+          "¿Por qué pueden servir las Spiky Balls durante una Goblin Army?",
+          "Muchos goblins avanzan por el suelo hacia ti y pasan sobre ellas, recibiendo daño."
+        ]
+      ]
+    },
+    {
+      "id": "reforja",
+      "title": "Modifiers",
+      "url": "https://terraria.wiki.gg/wiki/Modifiers",
+      "split": "train",
+      "qa": [
+        [
+          "¿Qué hace la reforja del Goblin Tinkerer?",
+          "Asigna un modificador aleatorio nuevo a un objeto compatible a cambio de monedas."
+        ],
+        [
+          "¿Reforjar garantiza conservar o mejorar el modificador actual?",
+          "No. Sustituye el modificador por otro aleatorio; no garantiza una mejora."
+        ],
+        [
+          "¿Puede una reforja dejar un objeto sin modificador?",
+          "No. La reforja siempre asigna un modificador a un objeto compatible."
+        ],
+        [
+          "¿Qué objetos reducen el coste de reforja un 20%?",
+          "Discount Card o su mejora Greedy Ring. La felicidad del Goblin Tinkerer también afecta al precio."
+        ]
+      ]
+    },
+    {
+      "id": "moonlord",
+      "title": "Moon Lord",
+      "url": "https://terraria.wiki.gg/wiki/Moon_Lord",
+      "split": "train",
+      "qa": [
+        [
+          "¿Cómo aparece Moon Lord al terminar los Lunar Events?",
+          "Aparece después de destruir los cuatro Celestial Pillars y esperar la cuenta atrás."
+        ],
+        [
+          "¿Cuál es el objetivo final que debo destruir para vencer a Moon Lord?",
+          "Su núcleo, el corazón del pecho. Se vuelve vulnerable después de destruir los objetivos oculares del cuerpo."
+        ],
+        [
+          "¿Cuánto tarda Moon Lord en aparecer tras destruir los cuatro pilares?",
+          "60 segundos. La invocación mediante Celestial Sigil tiene una espera distinta."
+        ],
+        [
+          "¿Cuánto tarda Moon Lord en aparecer al usar Celestial Sigil en las versiones modernas?",
+          "12 segundos; es una espera menor que la del final de los Lunar Events."
+        ]
+      ]
+    },
+    {
+      "id": "eval-ojo",
+      "title": "Suspicious Looking Eye",
+      "url": "https://terraria.wiki.gg/wiki/Suspicious_Looking_Eye",
+      "split": "evaluation",
+      "qa": [
+        [
+          "¿Qué jefe aparece al usar Suspicious Looking Eye? Mantén su nombre en inglés.",
+          "Eye of Cthulhu.",
+          [
+            "Eye of Cthulhu"
+          ]
+        ],
+        [
+          "¿Puedo activar un Suspicious Looking Eye de día?",
+          "No; solo se puede usar de noche.",
+          [
+            "noche"
+          ]
+        ],
+        [
+          "¿Cuántas Lens necesito para fabricar Suspicious Looking Eye? Usa una cifra.",
+          "6 Lens.",
+          [
+            "6"
+          ]
+        ],
+        [
+          "¿Qué estación necesito para fabricar Suspicious Looking Eye? Mantén los nombres en inglés.",
+          "Demon Altar o Crimson Altar.",
+          [
+            "Altar"
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "eval-abeja",
+      "title": "Queen Bee",
+      "url": "https://terraria.wiki.gg/wiki/Queen_Bee",
+      "split": "evaluation",
+      "qa": [
+        [
+          "¿Qué ocurre al romper una Larva dentro de una colmena de la Underground Jungle?",
+          "Se invoca a Queen Bee.",
+          [
+            "Queen Bee"
+          ]
+        ],
+        [
+          "¿Con qué objeto puedo invocar manualmente a Queen Bee?",
+          "Con una Abeemination.",
+          [
+            "Abeemination"
+          ]
+        ],
+        [
+          "¿En qué biomas se puede usar Abeemination? Mantén los nombres en inglés.",
+          "Jungle o Underground Jungle.",
+          [
+            "Jungle"
+          ]
+        ],
+        [
+          "¿Es obligatorio esperar a la noche para usar Abeemination en la Jungle?",
+          "No; puede usarse a cualquier hora.",
+          [
+            "No"
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "eval-duque",
+      "title": "Duke Fishron",
+      "url": "https://terraria.wiki.gg/wiki/Duke_Fishron",
+      "split": "evaluation",
+      "qa": [
+        [
+          "¿Qué cebo invoca a Duke Fishron pescando en el océano? Mantén el nombre en inglés.",
+          "Truffle Worm.",
+          [
+            "Truffle Worm"
+          ]
+        ],
+        [
+          "¿Invocar a Duke Fishron exige haber derrotado antes a otro jefe en ese mundo?",
+          "No. Su invocación no exige derrotar previamente a otros jefes en ese mundo.",
+          [
+            "No"
+          ]
+        ],
+        [
+          "¿Es obligatorio vencer a Duke Fishron para progresar?",
+          "No. Es un jefe opcional.",
+          [
+            "opcional"
+          ]
+        ],
+        [
+          "¿Qué dificultades incluyen la tercera fase de Duke Fishron?",
+          "Expert y Master Mode.",
+          [
+            "Expert",
+            "Master"
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "eval-aether",
+      "title": "The Aether",
+      "url": "https://terraria.wiki.gg/wiki/The_Aether",
+      "split": "evaluation",
+      "qa": [
+        [
+          "¿A qué lado del mundo busco el Aether natural respecto a la Jungle?",
+          "En el mismo lado que la Jungle, hacia el quinto exterior del mundo, bajo tierra.",
+          [
+            "mismo lado"
+          ]
+        ],
+        [
+          "¿Qué líquido ocupa la piscina central del Aether? Usa su nombre en inglés.",
+          "Shimmer.",
+          [
+            "Shimmer"
+          ]
+        ],
+        [
+          "¿Un mundo generado antes de 1.4.4 obtiene un Aether natural automáticamente al actualizar?",
+          "No. Los mundos anteriores a 1.4.4 no incorporan automáticamente ese minibioma.",
+          [
+            "No"
+          ]
+        ],
+        [
+          "¿Cuántas casillas de Shimmer requiere un Aether artificial? Usa una cifra.",
+          "Al menos 300 casillas, en Underground o Cavern.",
+          [
+            "300"
+          ]
+        ]
+      ]
+    }
+  ]
+}

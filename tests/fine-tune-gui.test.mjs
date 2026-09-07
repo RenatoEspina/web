@@ -20,7 +20,7 @@ test("la GUI de fine-tuning queda restringida a loopback", () => {
 });
 
 test("la GUI solo admite acciones administrativas predefinidas", () => {
-  assert.match(server, /allowed = \{"setup", "check", "train", "start-vllm", "stop-vllm", "load-adapter", "unload-adapter"\}/);
+  assert.match(server, /allowed = \{"setup", "check", "train", "start-vllm", "stop-vllm", "load-adapter", "unload-adapter", "verify-adapter"\}/);
   assert.match(server, /Dataset fuera de las carpetas permitidas/);
   assert.match(server, /x-fine-tune-token/i);
 });
@@ -34,6 +34,13 @@ test("el learning rate por defecto es válido para el control HTML", () => {
   assert.match(gui, /id="learningRate"[^>]+value="0\.0002"[^>]+step="any"/);
 });
 
+test("la GUI permite comprobar efecto LoRA además de registrarlo", () => {
+  assert.match(gui, /data-action="verify-adapter">Comprobar uso/);
+  assert.match(server, /if action == "verify-adapter"/);
+  assert.match(server, /"inferenceVerified": False/);
+  assert.match(server, /runtime_path = prepare_runtime_adapter\(job, name\)/);
+});
+
 test("evaluation.jsonl se identifica como evaluación y no se ofrece para SFT", () => {
   assert.match(server, /EVALUATION_DATASETS = \{"evaluation\.jsonl"\}/);
   assert.match(server, /evaluation\.jsonl es un dataset de evaluación y no se puede usar para SFT/);
@@ -41,7 +48,7 @@ test("evaluation.jsonl se identifica como evaluación y no se ofrece para SFT", 
 });
 
 test("entrenamiento y vLLM preparan adapters sin borrar su contenido", () => {
-  assert.equal((server.match(/ensure_adapter_dir_writable\(job\)/g) || []).length, 2);
+  assert.equal((server.match(/ensure_adapter_dir_writable\(job\)/g) || []).length, 3);
   assert.match(server, /docker,[\s\S]+"run",[\s\S]+"--rm",[\s\S]+"--user",[\s\S]+"0:0"/);
   assert.match(server, /DEFAULT_VLLM_IMAGE = "vllm\/vllm-openai:v0\.24\.0"/);
   assert.match(server, /"--entrypoint",\s+"\/bin\/sh"/);
