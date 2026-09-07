@@ -76,6 +76,62 @@ class AdapterAllowlistTests(unittest.TestCase):
                 gui_server.set_adapter_allowed_in_env("inexistente", False)
             self.assertFalse((root / ".env.local").exists())
 
+    def test_failed_allowlist_after_load_unloads_adapter_again(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            env_file = root / ".env.local"
+            original = "LLM_PROVIDER=vllm\nLLM_ADAPTER_MODELS=existente\n"
+            env_file.write_text(original, encoding="utf-8")
+
+            with (
+                mock.patch.object(gui_server, "ROOT", root),
+                mock.patch.object(gui_server.os, "replace", side_effect=OSError("solo lectura")),
+                mock.patch.object(gui_server, "post_vllm", return_value="ok") as post_vllm,
+            ):
+                with self.assertRaisesRegex(RuntimeError, "fue revertido"):
+                    gui_server.set_adapter_allowed_in_env("nuevo", True, rollback_runtime=True)
+
+            post_vllm.assert_called_once_with(
+                "/v1/unload_lora_adapter",
+                {"lora_name": "nuevo"},
+            )
+            self.assertEqual(env_file.read_text(encoding="utf-8"), original)
+
+    def test_failed_allowlist_after_unload_loads_adapter_again(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            env_file = root / ".env.local"
+            original = "LLM_PROVIDER=vllm\nLLM_ADAPTER_MODELS=existente,nuevo\n"
+            env_file.write_text(original, encoding="utf-8")
+
+            with (
+                mock.patch.object(gui_server, "ROOT", root),
+                mock.patch.object(gui_server.os, "replace", side_effect=OSError("solo lectura")),
+                mock.patch.object(gui_server, "post_vllm", return_value="ok") as post_vllm,
+            ):
+                with self.assertRaisesRegex(RuntimeError, "fue revertido"):
+                    gui_server.set_adapter_allowed_in_env("nuevo", False, rollback_runtime=True)
+
+            post_vllm.assert_called_once_with(
+                "/v1/load_lora_adapter",
+                {"lora_name": "nuevo", "lora_path": "/adapters/nuevo"},
+            )
+            self.assertEqual(env_file.read_text(encoding="utf-8"), original)
+
+    def test_failed_allowlist_and_failed_rollback_reports_inconsistent_state(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            env_file = root / ".env.local"
+            env_file.write_text("LLM_ADAPTER_MODELS=existente\n", encoding="utf-8")
+
+            with (
+                mock.patch.object(gui_server, "ROOT", root),
+                mock.patch.object(gui_server.os, "replace", side_effect=OSError("solo lectura")),
+                mock.patch.object(gui_server, "post_vllm", side_effect=RuntimeError("rollback falló")),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "puede ser inconsistente"):
+                    gui_server.set_adapter_allowed_in_env("nuevo", True, rollback_runtime=True)
+
 
 class DatasetTests(unittest.TestCase):
     def test_evaluation_dataset_is_not_listed_or_trainable(self):
