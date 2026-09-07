@@ -63,6 +63,36 @@ function headers(config: EmbeddingConfig): Record<string, string> {
   return result;
 }
 
+function orderedVllmEmbeddings(data: VllmResponse, expectedCount: number): unknown[] {
+  if (!Array.isArray(data.data) || data.data.length !== expectedCount) {
+    throw new Error("vLLM no devolvió un vector por cada entrada solicitada.");
+  }
+  if (data.data.some((item) => !item || typeof item !== "object")) {
+    throw new Error("vLLM devolvió una entrada de embedding inválida.");
+  }
+
+  const indexes = data.data.map((item) => item.index);
+  if (indexes.every((index) => index === undefined)) {
+    return data.data.map((item) => item.embedding);
+  }
+
+  const seen = new Set<number>();
+  const ordered = new Array<unknown>(expectedCount);
+  data.data.forEach((item) => {
+    if (typeof item.index !== "number" || !Number.isInteger(item.index)
+      || item.index < 0 || item.index >= expectedCount || seen.has(item.index)) {
+      throw new Error("vLLM devolvió índices de embeddings inválidos o duplicados.");
+    }
+    seen.add(item.index);
+    ordered[item.index] = item.embedding;
+  });
+
+  if (seen.size !== expectedCount) {
+    throw new Error("vLLM no devolvió todos los índices de embeddings.");
+  }
+  return ordered;
+}
+
 async function embedWithOllama(
   texts: string[],
   config: EmbeddingConfig,
@@ -96,17 +126,7 @@ async function embedWithVllm(
   });
 
   const data = await readJson(response, "vLLM") as VllmResponse;
-  if (!Array.isArray(data.data)) {
-    throw new Error("vLLM no devolvió el campo data de embeddings.");
-  }
-
-  const ordered = data.data
-    .map((item, fallbackIndex) => ({
-      index: typeof item.index === "number" ? item.index : fallbackIndex,
-      embedding: item.embedding,
-    }))
-    .sort((left, right) => left.index - right.index)
-    .map((item) => item.embedding);
+  const ordered = orderedVllmEmbeddings(data, texts.length);
 
   return validateVectors(ordered, texts.length);
 }

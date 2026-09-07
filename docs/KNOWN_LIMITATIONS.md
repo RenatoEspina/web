@@ -11,9 +11,13 @@ Cuando una limitación aceptada pase a formar parte del alcance soportado, debe 
 
 ### Cambio del modelo de embeddings con un índice existente
 
-Los documentos mantienen sus vectores en memoria junto con metadatos del proveedor, modelo y dimensión usados al indexarlos. El flujo actual presupone que el modelo de embeddings no cambia durante la vida del índice.
+Los documentos mantienen sus vectores en memoria junto con metadatos del proveedor,
+modelo, dimensión y prefijos usados al indexarlos. Si el perfil actual no coincide,
+RAG no compara esos vectores: degrada a recuperación léxica hasta reindexar.
 
-Cambiar `EMBEDDING_MODEL`, sus prefijos o el proveedor después de haber indexado documentos puede dejar vectores antiguos en memoria.
+Cambiar `EMBEDDING_MODEL`, sus prefijos o el proveedor después de haber indexado
+documentos deja vectores antiguos en memoria, pero ya no los mezcla con consultas
+del perfil nuevo.
 
 **Práctica aceptada actualmente:** reiniciar el gateway y volver a cargar los PDF después de cambiar la configuración de embeddings. Una política automática de reindexado o invalidación queda fuera de la prioridad inmediata.
 
@@ -51,37 +55,9 @@ Si en el futuro se necesita aislamiento estricto por corpus, deberá versionarse
 
 ## Errores conocidos pendientes
 
-### La GUI puede marcar el entorno de fine-tuning como listo sin haberlo verificado
-
-`trainer/gui_server.py` considera `environmentReady=true` cuando encuentra un ejecutable Python en el entorno virtual. Eso no garantiza que PyTorch, CUDA, `bitsandbytes` y NF4 estén funcionando.
-
-**Impacto:** un entorno creado parcialmente o con dependencias rotas puede mostrarse como **Entorno: listo** hasta ejecutar la comprobación real.
-
-**Corrección prevista:** separar al menos `venvPresent` de `environmentVerified` y basar el estado verde en una comprobación real o en el resultado persistido de la última comprobación válida.
-
-### `HOST` y `PORT` pueden parecer configurables desde `.env.local` sin afectar a Vite
-
-`.env.example` presenta `HOST` y `PORT` como configuración normal, mientras `vite.config.ts` consulta `process.env.HOST` y `process.env.PORT` durante la evaluación de la configuración.
-
-**Impacto:** si esos valores existen únicamente en `.env.local`, pueden no modificar el servidor de desarrollo como espera el usuario.
-
-**Corrección prevista:** cargar explícitamente los archivos de entorno en `vite.config.ts` mediante el mecanismo de configuración de Vite o retirar esas variables de la configuración documentada si no se desea soportarlas allí.
-
-### La interfaz dice “embeddings activos” sin comprobar la salud del servicio
-
-La interfaz deriva ese texto de `embedding.enabled`, que significa que el uso de embeddings está habilitado por configuración. `/api/health` comprueba actualmente el proveedor generativo, no la disponibilidad real del servicio de embeddings.
-
-**Impacto:** Ollama/embeddings puede estar caído y la UI seguir mostrando **embeddings activos**. La indexación degrada correctamente a recuperación léxica, pero el estado visual resulta engañoso.
-
-**Corrección prevista:** usar **habilitados** para el estado de configuración y reservar **activos/disponibles** para un health check real.
-
-### La UI puede mostrar RAG aunque no haya documentos seleccionados
-
-El selector puede permanecer en `RAG` con `selectedDocumentIds=[]`. El backend interpreta correctamente una selección vacía como ausencia de contexto documental y devuelve `mode=none`.
-
-**Impacto:** la semántica efectiva del backend es correcta, pero la interfaz puede sugerir que la siguiente pregunta usará RAG cuando no utilizará ningún PDF.
-
-**Corrección prevista:** mostrar un estado explícito de “selecciona al menos un documento” o reflejar visualmente el modo efectivo `none` mientras la selección esté vacía.
+No hay errores funcionales conocidos en este momento. Las comprobaciones de entorno,
+la carga de variables `HOST`/`PORT` y los mensajes de estado de embeddings y selección
+documental se mantienen en el código y sus regresiones correspondientes.
 
 ## Correcciones recientes relacionadas
 
@@ -92,3 +68,9 @@ Los siguientes problemas ya no se consideran errores conocidos porque cuentan co
 - RAG sin candidatos ya no afirma en el `system` prompt que se recuperaron fragmentos relevantes;
 - la carga y descarga dinámica de LoRA intenta revertir el estado de vLLM si falla la actualización de `LLM_ADAPTER_MODELS`, y reporta explícitamente si también falla el rollback;
 - la API evita procesar un nuevo PDF cuando el workspace ya alcanzó el límite de documentos.
+- la GUI distingue un entorno virtual presente de uno verificado mediante CUDA/NF4;
+- Vite carga `HOST` y `PORT` desde `.env.local` antes de construir su configuración;
+- la UI dice **embeddings habilitados** (configuración), no **activos** (salud no comprobada),
+  y advierte cuando RAG/CAG no tiene documentos seleccionados;
+- los vectores indexados se comparan solo con el mismo proveedor, modelo y prefijos de embeddings;
+- la GUI rechaza adaptadores cuyo modelo base no coincide con el modelo servido por vLLM.

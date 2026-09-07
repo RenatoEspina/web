@@ -66,6 +66,29 @@ def format_dataset(examples: list[dict]) -> Dataset:
     return Dataset.from_list(examples)
 
 
+def validate_assistant_loss_support(tokenizer: AutoTokenizer, examples: list[dict]) -> None:
+    """Fail closed if the pinned TRL stack cannot produce assistant masks."""
+    from trl.trainer.sft_trainer import get_training_chat_template
+
+    template = tokenizer.chat_template or ""
+    if "{% generation %}" not in template:
+        template = get_training_chat_template(tokenizer)
+    encoded = tokenizer.apply_chat_template(
+        examples[0]["messages"],
+        chat_template=template,
+        tokenize=True,
+        return_assistant_tokens_mask=True,
+        add_generation_prompt=False,
+        enable_thinking=False,
+    )
+    masks = encoded.get("assistant_masks")
+    if not isinstance(masks, list) or 1 not in masks:
+        raise RuntimeError(
+            "No fue posible construir una máscara de pérdida para respuestas assistant; "
+            "se canceló el entrenamiento para no optimizar el prompt completo."
+        )
+
+
 def main() -> None:
     args = arguments()
     if not SAFE_NAME.fullmatch(args.name):
@@ -87,6 +110,7 @@ def main() -> None:
         tokenizer = AutoTokenizer.from_pretrained(args.model, trust_remote_code=False)
         if tokenizer.pad_token is None:
             tokenizer.pad_token = tokenizer.eos_token
+        validate_assistant_loss_support(tokenizer, examples)
         dataset = format_dataset(examples)
 
         compute_dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
@@ -160,6 +184,7 @@ def main() -> None:
                 "alpha": args.alpha,
                 "dropout": args.dropout,
                 "assistantOnlyLoss": True,
+                "assistantMaskingVerified": True,
                 "epochs": args.epochs,
                 "learningRate": args.learning_rate,
                 "batchSize": args.batch_size,

@@ -9,6 +9,29 @@ import gui_server  # noqa: E402
 
 
 class AdapterDirectoryTests(unittest.TestCase):
+    def test_environment_is_ready_only_after_real_verification(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            python_path = Path(temporary) / "python"
+            python_path.write_bytes(b"python")
+            previous = gui_server.ENVIRONMENT_VERIFIED
+            try:
+                with (
+                    mock.patch.object(gui_server, "trainer_python", return_value=python_path),
+                    mock.patch.object(gui_server, "fetch_vllm_models", return_value=(False, [])),
+                ):
+                    gui_server.ENVIRONMENT_VERIFIED = False
+                    pending = gui_server.status_payload()
+                    self.assertTrue(pending["venvPresent"])
+                    self.assertFalse(pending["environmentVerified"])
+                    self.assertFalse(pending["environmentReady"])
+
+                    gui_server.ENVIRONMENT_VERIFIED = True
+                    ready = gui_server.status_payload()
+                    self.assertTrue(ready["environmentVerified"])
+                    self.assertTrue(ready["environmentReady"])
+            finally:
+                gui_server.ENVIRONMENT_VERIFIED = previous
+
     def test_creates_writable_directory_without_removing_existing_files(self):
         with tempfile.TemporaryDirectory() as temporary:
             adapter_dir = Path(temporary) / "adapters"

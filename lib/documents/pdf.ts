@@ -77,6 +77,8 @@ export async function indexPdf(data: Uint8Array, originalName: string, sizeBytes
       ...(embeddingProvider ? { embeddingProvider } : {}),
       ...(embeddingModel ? { embeddingModel } : {}),
       ...(embeddingDimension ? { embeddingDimension } : {}),
+      ...(embeddingProvider ? { embeddingQueryPrefix: embeddingConfig.queryPrefix } : {}),
+      ...(embeddingProvider ? { embeddingDocumentPrefix: embeddingConfig.documentPrefix } : {}),
     };
   } finally {
     await pdf.cleanup();

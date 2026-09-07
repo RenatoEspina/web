@@ -1,5 +1,5 @@
 import vinext from "vinext";
-import { defineConfig } from "vite";
+import { defineConfig, loadEnv } from "vite";
 import hostingConfig from "./.openai/hosting.json";
 import { sites } from "./build/sites-vite-plugin";
 
@@ -33,7 +33,10 @@ const localBindingConfig = {
     : [],
 };
 
-export default defineConfig(async () => {
+export default defineConfig(async ({ mode }) => {
+  // Vite does not populate process.env from .env.local while evaluating this
+  // config. Load the files explicitly so HOST/PORT match the documented setup.
+  const env = loadEnv(mode, process.cwd(), "");
   // Keep Wrangler and Miniflare state project-local. These are non-secret tool
   // settings; application environment belongs in ignored `.env*` files.
   process.env.WRANGLER_WRITE_LOGS ??= "false";
@@ -45,8 +48,8 @@ export default defineConfig(async () => {
 
   return {
     server: {
-      host: process.env.HOST ?? "127.0.0.1",
-      port: Number(process.env.PORT ?? 3000),
+      host: process.env.HOST ?? env.HOST ?? "127.0.0.1",
+      port: Number(process.env.PORT ?? env.PORT ?? 3000),
       strictPort: true,
       allowedHosts: [
         "terminal.local",

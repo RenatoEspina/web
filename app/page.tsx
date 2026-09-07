@@ -506,7 +506,7 @@ export default function Home() {
           <span className="meta-spacer" />
           {config && config.models.length > 1 && <Select value={selectedModel} onValueChange={setSelectedModel}><SelectTrigger className="knowledge-select" aria-label="Modelo o adaptador"><SelectValue /></SelectTrigger><SelectContent>{config.models.map((model) => <SelectItem value={model} key={model}>{model}</SelectItem>)}</SelectContent></Select>}
           <Link href="/fine-tune" className="token-link"><FlaskConical size={13} /> Fine-tuning</Link>
-          <span className="secure-label"><ShieldCheck size={14} /> PDF en memoria · embeddings {config?.embedding.enabled ? "activos" : "desactivados"}</span>
+          <span className="secure-label"><ShieldCheck size={14} /> PDF en memoria · embeddings {config?.embedding.enabled ? "habilitados" : "deshabilitados"}</span>
         </div>
 
         <section className="knowledge-bar" aria-label="Biblioteca documental">
@@ -583,7 +583,9 @@ export default function Home() {
             <p className="knowledge-empty">Agrega un PDF para consultar su contenido desde el chat.</p>
           )}
           <p className="knowledge-hint">
-            {knowledgeMode === "cag"
+            {selectedDocumentIds.length === 0 && knowledgeMode !== "none"
+              ? "Selecciona al menos un PDF para activar RAG o CAG; sin selección el chat responde sin documentos."
+              : knowledgeMode === "cag"
               ? "CAG reutiliza el contexto documental en orden y lo trunca si supera el límite configurado."
               : knowledgeMode === "rag"
                 ? "RAG combina embeddings semánticos y coincidencia léxica para recuperar los fragmentos más relacionados."

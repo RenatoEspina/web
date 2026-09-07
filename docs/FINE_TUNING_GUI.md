@@ -109,6 +109,11 @@ Al pulsar **Preparar y entrenar**, la GUI:
 6. conserva los roles de la conversación y entrena la pérdida solo sobre las respuestas del asistente;
 7. vuelve a iniciar vLLM si estaba activo antes del entrenamiento.
 
+Antes de cargar el modelo cuantizado, el entrenador verifica que el tokenizer y la
+versión fijada de TRL puedan producir máscaras reales para los tokens `assistant`.
+Si no puede hacerlo, cancela el entrenamiento en lugar de optimizar silenciosamente
+el prompt completo.
+
 El entrenador trabaja primero en un directorio temporal oculto y solo publica `adapters/<nombre>/` después de guardar correctamente pesos, tokenizer y `manifest.json`. Un fallo no deja un adaptador parcial bloqueando el mismo nombre.
 
 Solo se permite una operación pesada simultánea. El trabajo actual se puede cancelar desde la terminal integrada.
@@ -150,6 +155,10 @@ El modelo de texto de Transformers guarda módulos `model.layers.*`, mientras
 vLLM 0.24.0 usa `language_model.model.layers.*` en su wrapper Qwen3.5, incluso
 con `--language-model-only`. Registrar el adaptador en `/v1/models` no prueba
 que los pesos estén aplicándose.
+
+La GUI también comprueba que `base_model_name_or_path` del adaptador coincide con
+el único modelo base que vLLM expone actualmente; un adaptador entrenado para otro
+modelo se rechaza antes de llamar a `load_lora_adapter`.
 
 La GUI exporta Qwen3.5 automáticamente con el prefijo HF
 `model.language_model.layers.*`, que el mapper de vLLM convierte al namespace

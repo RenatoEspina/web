@@ -22,6 +22,8 @@ export interface IndexedDocument {
   embeddingProvider?: string;
   embeddingModel?: string;
   embeddingDimension?: number;
+  embeddingQueryPrefix?: string;
+  embeddingDocumentPrefix?: string;
 }
 
 export interface DocumentSummary {

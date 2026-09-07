@@ -1,4 +1,4 @@
-import { embedText } from "../embeddings";
+import { embedText, getEmbeddingConfig } from "../embeddings";
 
 import { getDocumentConfig } from "./config";
 import { getCachedCagContext, getDocuments, setCachedCagContext } from "./store";
@@ -113,10 +113,34 @@ function rankPositions(
 
 const RRF_K = 60;
 
-async function rankChunks(query: string, chunks: DocumentChunk[]): Promise<RankedChunks> {
+function embeddingCompatible(
+  document: IndexedDocument,
+  provider: string,
+  model: string,
+  queryPrefix: string,
+  documentPrefix: string,
+): boolean {
+  if (!document.chunks.some((chunk) => chunk.embedding)) return false;
+  // Documents created before the profile metadata was introduced remain usable;
+  // their dimensions are still checked by cosineSimilarity below.
+  if (!document.embeddingProvider && !document.embeddingModel) return true;
+  return document.embeddingProvider === provider
+    && document.embeddingModel === model
+    && (document.embeddingQueryPrefix === undefined || document.embeddingQueryPrefix === queryPrefix)
+    && (document.embeddingDocumentPrefix === undefined || document.embeddingDocumentPrefix === documentPrefix);
+}
+
+async function rankChunks(query: string, documents: IndexedDocument[]): Promise<RankedChunks> {
+  const chunks = documents.flatMap((document) => document.chunks);
   if (chunks.length === 0) return { ranked: [], embeddingUsed: false };
 
   const config = getDocumentConfig();
+  let embeddingConfig: ReturnType<typeof getEmbeddingConfig> | null = null;
+  try {
+    embeddingConfig = getEmbeddingConfig();
+  } catch (error) {
+    console.error("[llm-bridge] Invalid embedding configuration; using lexical retrieval", error);
+  }
   const lexicalScores = scoreLexically(query, chunks);
   const semanticScores: Array<number | undefined> = chunks.map(() => undefined);
   const weightTotal = config.semanticWeight + config.lexicalWeight;
@@ -125,13 +149,28 @@ async function rankChunks(query: string, chunks: DocumentChunk[]): Promise<Ranke
   const semanticEnabled = semanticWeight > 0;
   const lexicalEnabled = lexicalWeight > 0;
 
-  const hasStoredEmbeddings = chunks.some((chunk) => Array.isArray(chunk.embedding) && chunk.embedding.length > 0);
+  const compatibleDocuments = new Set(
+    documents
+      .filter((document) => embeddingConfig?.enabled === true && embeddingCompatible(
+        document,
+        embeddingConfig!.provider,
+        embeddingConfig!.model,
+        embeddingConfig!.queryPrefix,
+        embeddingConfig!.documentPrefix,
+      ))
+      .map((document) => document.id),
+  );
+  const hasStoredEmbeddings = chunks.some((chunk) => (
+    compatibleDocuments.has(chunk.documentId)
+    && Array.isArray(chunk.embedding)
+    && chunk.embedding.length > 0
+  ));
   if (hasStoredEmbeddings && semanticEnabled) {
     try {
       const queryEmbedding = await embedText(query, "query");
       if (queryEmbedding) {
         chunks.forEach((chunk, index) => {
-          if (!chunk.embedding) return;
+          if (!compatibleDocuments.has(chunk.documentId) || !chunk.embedding) return;
           const score = cosineSimilarity(queryEmbedding, chunk.embedding);
           if (score !== null) semanticScores[index] = Math.max(-1, Math.min(1, score));
         });
@@ -211,7 +250,7 @@ function neutralizeDocumentDelimiters(value: string): string {
 }
 
 function contextBlock(chunk: DocumentChunk): string {
-  const documentName = JSON.stringify(chunk.documentName);
+  const documentName = JSON.stringify(neutralizeDocumentDelimiters(chunk.documentName));
   return `[Documento: ${documentName} | ${pageLabel(chunk)}]\n${neutralizeDocumentDelimiters(chunk.text)}`;
 }
 
@@ -225,7 +264,7 @@ function estimatedContextCharacters(chunks: DocumentChunk[]): number {
 
 async function buildRag(documents: IndexedDocument[], query: string): Promise<KnowledgeContext> {
   const config = getDocumentConfig();
-  const { ranked: allRanked, embeddingUsed } = await rankChunks(query, documents.flatMap((document) => document.chunks));
+  const { ranked: allRanked, embeddingUsed } = await rankChunks(query, documents);
   const ranked = allRanked.slice(0, config.topK);
   const sources: KnowledgeSource[] = [];
   let remaining = config.maxRagContextCharacters;

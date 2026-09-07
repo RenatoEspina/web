@@ -64,6 +64,7 @@ class Job:
 STATE_LOCK = threading.Lock()
 CURRENT_JOB: Job | None = None
 CSRF_TOKEN = secrets.token_urlsafe(32)
+ENVIRONMENT_VERIFIED = False
 
 
 class JobCancelled(RuntimeError):
@@ -213,6 +214,8 @@ def adapter_dir_is_writable() -> bool:
 
 def ensure_adapter_dir_writable(job: Job) -> None:
     """Create or safely repair the adapters bind mount without deleting contents."""
+    if ADAPTER_DIR.is_symlink():
+        raise RuntimeError("adapters/ no puede ser un enlace simbólico.")
     if adapter_dir_is_writable():
         return
 
@@ -256,11 +259,11 @@ def ensure_adapter_dir_writable(job: Job) -> None:
 
 def list_adapters() -> list[dict[str, Any]]:
     result: list[dict[str, Any]] = []
-    if not ADAPTER_DIR.exists():
+    if ADAPTER_DIR.is_symlink() or not ADAPTER_DIR.is_dir():
         return result
     for directory in sorted(ADAPTER_DIR.iterdir()):
         manifest_path = directory / "manifest.json"
-        if not directory.is_dir() or not manifest_path.is_file() or not SAFE_NAME.fullmatch(directory.name):
+        if directory.is_symlink() or not directory.is_dir() or manifest_path.is_symlink() or not manifest_path.is_file() or not SAFE_NAME.fullmatch(directory.name):
             continue
         try:
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -311,11 +314,15 @@ def job_snapshot(job: Job | None) -> dict[str, Any] | None:
 
 def status_payload() -> dict[str, Any]:
     running, models = fetch_vllm_models()
+    venv_present = trainer_python().is_file()
     with STATE_LOCK:
         job = job_snapshot(CURRENT_JOB)
+        environment_verified = ENVIRONMENT_VERIFIED
     return {
         "localOnly": True,
-        "environmentReady": trainer_python().is_file(),
+        "venvPresent": venv_present,
+        "environmentVerified": environment_verified and venv_present,
+        "environmentReady": environment_verified and venv_present,
         "dockerCli": shutil.which("docker") is not None,
         "bashCli": shutil.which("bash") is not None,
         "vllmRunning": running,
@@ -370,7 +377,12 @@ def run_command(
 
 
 def check_training_environment(job: Job, label: str) -> None:
+    global ENVIRONMENT_VERIFIED
+    with STATE_LOCK:
+        ENVIRONMENT_VERIFIED = False
     run_command(job, [str(trainer_python()), str(ENVIRONMENT_CHECK)], label=label)
+    with STATE_LOCK:
+        ENVIRONMENT_VERIFIED = True
 
 
 def wait_for_vllm(job: Job, timeout: int) -> None:
@@ -412,8 +424,10 @@ def post_vllm(path: str, payload: dict[str, str]) -> str:
 
 
 def prepare_runtime_adapter(job: Job, name: str) -> str:
+    if ADAPTER_DIR.is_symlink() or not ADAPTER_DIR.is_dir():
+        raise RuntimeError("La carpeta adapters/ no es una carpeta local válida.")
     directory = ADAPTER_DIR / name
-    if directory.is_symlink():
+    if directory.is_symlink() or not directory.is_dir() or directory.resolve().parent != ADAPTER_DIR.resolve():
         raise ValueError("El adaptador no puede ser un enlace simbólico.")
     config, manifest = read_config(directory)
     if not needs_export(config, manifest):
@@ -435,6 +449,39 @@ def loaded_adapter_path(name: str) -> str:
         if model.get("id") == name and model.get("parent") and isinstance(model.get("root"), str):
             return model["root"]
     raise RuntimeError(f"El adaptador {name} no aparece cargado en vLLM.")
+
+
+def vllm_base_model() -> str:
+    """Return the actual base model exposed by the running vLLM instance."""
+    try:
+        with urlopen("http://127.0.0.1:8000/v1/models", timeout=5) as response:
+            records = json.load(response).get("data", [])
+    except (OSError, URLError, ValueError, json.JSONDecodeError) as error:
+        raise RuntimeError("No fue posible comprobar el modelo base de vLLM.") from error
+
+    if not isinstance(records, list):
+        raise RuntimeError("vLLM devolvió un listado de modelos inválido.")
+    base_models = [
+        item.get("id") for item in records
+        if isinstance(item, dict) and isinstance(item.get("id"), str) and not item.get("parent")
+    ]
+    if len(base_models) != 1:
+        raise RuntimeError("No fue posible identificar un único modelo base en vLLM.")
+    return base_models[0]
+
+
+def validate_adapter_base_model(directory: Path) -> str:
+    config, manifest = read_config(directory)
+    raw_model = config.get("base_model_name_or_path") or manifest.get("baseModel")
+    if not isinstance(raw_model, str) or not raw_model.strip():
+        raise RuntimeError("El adaptador no declara su modelo base.")
+    adapter_model = validate_model(raw_model)
+    runtime_model = validate_model(vllm_base_model())
+    if adapter_model != runtime_model:
+        raise RuntimeError(
+            f"El adaptador fue entrenado para '{adapter_model}', pero vLLM está sirviendo '{runtime_model}'."
+        )
+    return adapter_model
 
 
 def adapter_is_loaded(name: str) -> bool:
@@ -665,9 +712,17 @@ def run_action(job: Job, payload: dict[str, Any]) -> None:
         return
     if action == "verify-adapter":
         name = validate_adapter_name(payload.get("name"))
-        loaded_adapter_path(name)
-        config, manifest = read_config(ADAPTER_DIR / name)
-        base_model = validate_model(config.get("base_model_name_or_path") or manifest.get("baseModel"))
+        directory = ADAPTER_DIR / name
+        if ADAPTER_DIR.is_symlink() or directory.is_symlink() or not directory.is_dir():
+            raise RuntimeError(f"No existe un adaptador válido llamado '{name}'.")
+        base_model = validate_adapter_base_model(directory)
+        expected_runtime_path = prepare_runtime_adapter(job, name)
+        actual_runtime_path = loaded_adapter_path(name)
+        if actual_runtime_path != expected_runtime_path:
+            raise RuntimeError(
+                f"vLLM tiene cargada otra ruta para '{name}' ({actual_runtime_path}); "
+                "descarga y vuelve a cargar el adaptador antes de verificarlo."
+            )
         run_command(job, [str(trainer_python()), str(TRAINER_DIR / "verify_lora.py"),
                           "--base-model", base_model, "--adapter", name],
                     label="Comparando probabilidades: base repetida vs LoRA")
@@ -683,8 +738,11 @@ def run_action(job: Job, payload: dict[str, Any]) -> None:
         name = validate_adapter_name(payload.get("name"))
         directory = ADAPTER_DIR / name
         if action == "load-adapter":
+            if ADAPTER_DIR.is_symlink() or directory.is_symlink() or not directory.is_dir():
+                raise RuntimeError(f"No existe un adaptador válido llamado '{name}'.")
             if not (directory / "adapter_config.json").is_file() or not (directory / "adapter_model.safetensors").is_file():
                 raise RuntimeError("El adaptador no contiene los archivos PEFT esperados.")
+            validate_adapter_base_model(directory)
             runtime_path = prepare_runtime_adapter(job, name)
             append_log(job, f"Cargando {name} en vLLM...")
             response = post_vllm(

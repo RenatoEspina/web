@@ -12,6 +12,7 @@ const requirements = await readFile(new URL("../trainer/requirements.txt", impor
 const dependencyCheck = await readFile(new URL("../trainer/check_dependencies.py", import.meta.url), "utf8");
 const trainingScript = await readFile(new URL("../scripts/train-adapter.sh", import.meta.url), "utf8");
 const ci = await readFile(new URL("../.github/workflows/ci.yml", import.meta.url), "utf8");
+const viteConfig = await readFile(new URL("../vite.config.ts", import.meta.url), "utf8");
 
 test("la GUI de fine-tuning queda restringida a loopback", () => {
   assert.match(server, /default="127\.0\.0\.1"/);
@@ -23,6 +24,25 @@ test("la GUI solo admite acciones administrativas predefinidas", () => {
   assert.match(server, /allowed = \{"setup", "check", "train", "start-vllm", "stop-vllm", "load-adapter", "unload-adapter", "verify-adapter", "delete-adapter"\}/);
   assert.match(server, /Dataset fuera de las carpetas permitidas/);
   assert.match(server, /x-fine-tune-token/i);
+});
+
+test("la GUI verifica CUDA/NF4 antes de marcar el entorno como listo", () => {
+  assert.match(server, /environmentVerified/);
+  assert.match(server, /ENVIRONMENT_VERIFIED = True/);
+  assert.match(server, /ENVIRONMENT_VERIFIED = False/);
+  assert.match(server, /venvPresent/);
+});
+
+test("la carga LoRA comprueba que el modelo base coincide con vLLM", () => {
+  assert.match(server, /def vllm_base_model\(\)/);
+  assert.match(server, /validate_adapter_base_model\(directory\)/);
+  assert.match(server, /entrenado para/);
+});
+
+test("Vite carga HOST y PORT desde los archivos de entorno", () => {
+  assert.match(viteConfig, /loadEnv\(mode, process\.cwd\(\), ""\)/);
+  assert.match(viteConfig, /process\.env\.HOST \?\? env\.HOST/);
+  assert.match(viteConfig, /process\.env\.PORT \?\? env\.PORT/);
 });
 
 test("vLLM habilita LoRA dinámica únicamente detrás del puerto local", () => {
@@ -123,6 +143,9 @@ test("train.py valida la arquitectura antes de cargar el modelo y no usa Dataset
   assert.match(trainer, /validate_model_architecture\(args\.model\)/);
   assert.match(trainer, /AutoConfig\.from_pretrained/);
   assert.match(trainer, /Dataset\.from_list\(examples\)/);
+  assert.match(trainer, /validate_assistant_loss_support\(tokenizer, examples\)/);
+  assert.match(trainer, /return_assistant_tokens_mask=True/);
+  assert.match(trainer, /assistantMaskingVerified/);
   assert.match(trainer, /assistant_only_loss=True/);
   assert.match(trainer, /processing_class=tokenizer/);
   assert.match(trainer, /dtype=compute_dtype/);

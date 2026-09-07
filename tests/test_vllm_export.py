@@ -38,10 +38,13 @@ class NamespaceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             directory = Path(temp) / "demo"
             directory.mkdir()
-            for name in ("adapter_config.json", "adapter_model.safetensors"):
-                (directory / name).write_text("{}")
+            (directory / "adapter_config.json").write_text(
+                json.dumps({"base_model_name_or_path": "Qwen/Qwen3.5-0.8B"})
+            )
+            (directory / "adapter_model.safetensors").write_text("{}")
             with (mock.patch.object(gui_server, "ADAPTER_DIR", Path(temp)),
                   mock.patch.object(gui_server, "prepare_runtime_adapter", return_value="/adapters/.vllm-exports/demo/hash"),
+                  mock.patch.object(gui_server, "vllm_base_model", return_value="Qwen/Qwen3.5-0.8B"),
                   mock.patch.object(gui_server, "post_vllm", return_value="ok") as post,
                   mock.patch.object(gui_server, "set_adapter_allowed_in_env")):
                 job = gui_server.Job(id="test", action="load-adapter")
@@ -53,12 +56,30 @@ class NamespaceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             directory = Path(temp) / "demo"
             directory.mkdir()
-            for filename in ("adapter_config.json", "adapter_model.safetensors"):
-                (directory / filename).write_text("{}")
+            (directory / "adapter_config.json").write_text(
+                json.dumps({"base_model_name_or_path": "Qwen/Qwen3.5-0.8B"})
+            )
+            (directory / "adapter_model.safetensors").write_text("{}")
             with (mock.patch.object(gui_server, "ADAPTER_DIR", Path(temp)),
                   mock.patch.object(gui_server, "prepare_runtime_adapter", side_effect=RuntimeError("export failed")),
+                  mock.patch.object(gui_server, "vllm_base_model", return_value="Qwen/Qwen3.5-0.8B"),
                   mock.patch.object(gui_server, "post_vllm") as post):
                 with self.assertRaisesRegex(RuntimeError, "export failed"):
+                    gui_server.run_action(gui_server.Job(id="test", action="load-adapter"), {"name": "demo"})
+                post.assert_not_called()
+
+    def test_load_refuses_adapter_for_a_different_base_model(self):
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp) / "demo"
+            directory.mkdir()
+            (directory / "adapter_config.json").write_text(
+                json.dumps({"base_model_name_or_path": "Qwen/Qwen2.5-0.5B"})
+            )
+            (directory / "adapter_model.safetensors").write_text("{}")
+            with (mock.patch.object(gui_server, "ADAPTER_DIR", Path(temp)),
+                  mock.patch.object(gui_server, "vllm_base_model", return_value="Qwen/Qwen3.5-0.8B"),
+                  mock.patch.object(gui_server, "post_vllm") as post):
+                with self.assertRaisesRegex(RuntimeError, "entrenado para"):
                     gui_server.run_action(gui_server.Job(id="test", action="load-adapter"), {"name": "demo"})
                 post.assert_not_called()
 
