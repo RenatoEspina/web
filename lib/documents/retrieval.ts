@@ -163,8 +163,8 @@ async function rankChunks(query: string, chunks: DocumentChunk[]): Promise<Ranke
         chunk,
         // RRF fusiona rankings heterogéneos sin asumir que cosine y TF-IDF
         // comparten escala o significado. Si ningún embedding supera el umbral,
-        // el ranking vuelve a ser exclusivamente léxico.
-        score: embeddingUsed ? fusedScore : lexicalScores[index],
+        // el ranking vuelve a ser exclusivamente léxico cuando esa señal está habilitada.
+        score: embeddingUsed ? fusedScore : (lexicalEnabled ? lexicalScores[index] : 0),
         lexicalScore: lexicalScores[index],
         ...(semanticScores[index] === undefined ? {} : { semanticScore: semanticScores[index] }),
       };
