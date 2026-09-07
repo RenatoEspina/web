@@ -3,9 +3,15 @@ import type { DocumentChunk } from "./types";
 
 function normalizeText(value: string): string {
   return value
+    .replace(/\r\n?/g, "\n")
     .replace(/\u00ad/g, "")
-    .replace(/-\s+/g, "")
-    .replace(/\s+/gu, " ")
+    // Recompone palabras partidas al final de una línea sin eliminar guiones
+    // rodeados de espacios ni rangos numéricos como "14 - 20".
+    .replace(/([\p{L}]{2,})-[\t ]*\n[\t ]*([\p{Ll}]{2,})/gu, "$1$2")
+    .split("\n")
+    .map((line) => line.replace(/[\t \f\v]+/g, " ").trim())
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
     .trim();
 }
 
@@ -13,6 +19,8 @@ function findBreak(text: string, desiredEnd: number, minimumEnd: number): number
   if (desiredEnd >= text.length) return text.length;
 
   const candidates = [
+    text.lastIndexOf("\n\n", desiredEnd),
+    text.lastIndexOf("\n", desiredEnd),
     text.lastIndexOf(". ", desiredEnd),
     text.lastIndexOf("; ", desiredEnd),
     text.lastIndexOf(": ", desiredEnd),
@@ -42,7 +50,7 @@ function joinPages(pages: string[]): { text: string; spans: PageSpan[] } {
     const normalized = normalizeText(page);
     if (!normalized) return;
 
-    if (text) text += " ";
+    if (text) text += "\n\n";
     const start = text.length;
     text += normalized;
     spans.push({ page: index + 1, start, end: text.length });
@@ -70,8 +78,7 @@ function splitText(text: string, chunkSize: number, overlap: number): TextSegmen
     }
 
     if (end >= text.length) break;
-    const nextStart = Math.max(start + 1, end - overlap);
-    start = nextStart;
+    start = Math.max(start + 1, end - overlap);
   }
 
   return segments;
