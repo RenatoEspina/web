@@ -106,3 +106,24 @@ test("train.py valida la arquitectura antes de cargar el modelo y no usa Dataset
   assert.doesNotMatch(trainer, /Dataset\.from_list\(examples\)\.map/);
   assert.doesNotMatch(trainer, /lambda example/);
 });
+
+test("la GUI vuelve a ser un wizard de cinco pasos con terminal separada", () => {
+  assert.equal((gui.match(/class="step-button[^\"]*"[^>]+data-step="[0-4]"/g) || []).length, 5);
+  assert.equal((gui.match(/class="step-panel[^\"]*"[^>]+data-panel="[0-4]"/g) || []).length, 5);
+  assert.match(gui, /id="prevStepBtn"[^>]*>Atrás</);
+  assert.match(gui, /id="nextStepBtn"[^>]*>Siguiente</);
+  assert.match(gui, /Terminal \/ logs/);
+  assert.match(gui, /function showStep\(index\)/);
+  assert.match(gui, /grid-template-columns:minmax\(0,1\.05fr\) minmax\(360px,\.8fr\)/);
+});
+
+test("el HF token de entrenamiento es efímero y no viaja por argv", () => {
+  assert.match(gui, /id="trainHfToken" type="password"/);
+  assert.match(gui, /hfToken:\$\("trainHfToken"\)\.value/);
+  assert.equal((server.match(/payload\.pop\("hfToken", ""\)/g) || []).length, 2);
+  assert.match(server, /env\["HF_TOKEN"\] = token/);
+  assert.match(server, /env\["HUGGING_FACE_HUB_TOKEN"\] = token/);
+  assert.match(server, /run_command\(job, command, env=training_env/);
+  assert.doesNotMatch(server, /--hf-token/);
+  assert.doesNotMatch(server, /os\.environ\["HF_TOKEN"\]\s*=/);
+});
