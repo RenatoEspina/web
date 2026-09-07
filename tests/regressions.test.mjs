@@ -131,7 +131,7 @@ test("RRF excluye candidatos con similitud semántica no positiva y sin señal l
           documentName: "semantica.pdf",
           page: 1,
           index: 0,
-          text: "Un fragmento conceptualmente relacionado sin palabras de la consulta.",
+          text: "Un fragmento conceptualmente relacionado.",
           embedding: [1, 0],
         },
         {
@@ -140,13 +140,13 @@ test("RRF excluye candidatos con similitud semántica no positiva y sin señal l
           documentName: "semantica.pdf",
           page: 2,
           index: 1,
-          text: "Un fragmento conceptualmente opuesto y también sin coincidencias.",
+          text: "Un fragmento conceptualmente opuesto.",
           embedding: [-1, 0],
         },
       ],
     });
 
-    const rag = await buildKnowledgeContext(workspaceId, "rag", "consulta ajena", [documentId]);
+    const rag = await buildKnowledgeContext(workspaceId, "rag", "meteorología austral", [documentId]);
     assert.equal(rag?.embeddingUsed, true);
     assert.deepEqual(rag?.sources.map((source) => source.chunkId), [`${documentId}-0`]);
   } finally {
