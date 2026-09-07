@@ -11,6 +11,7 @@ const trainer = await readFile(new URL("../trainer/train.py", import.meta.url), 
 const requirements = await readFile(new URL("../trainer/requirements.txt", import.meta.url), "utf8");
 const dependencyCheck = await readFile(new URL("../trainer/check_dependencies.py", import.meta.url), "utf8");
 const trainingScript = await readFile(new URL("../scripts/train-adapter.sh", import.meta.url), "utf8");
+const ci = await readFile(new URL("../.github/workflows/ci.yml", import.meta.url), "utf8");
 
 test("la GUI de fine-tuning queda restringida a loopback", () => {
   assert.match(server, /default="127\.0\.0\.1"/);
@@ -87,8 +88,14 @@ test("el stack de fine-tuning soporta oficialmente Qwen3.5 y Python 3.14", () =>
   assert.match(requirements, /^trl==1\.11\.0$/m);
   assert.match(requirements, /^peft==0\.20\.0$/m);
   assert.match(requirements, /^accelerate==1\.14\.0$/m);
+  assert.match(requirements, /^safetensors==0\.8\.0$/m);
   assert.match(dependencyCheck, /"qwen3_5" not in CONFIG_MAPPING/);
   assert.match(dependencyCheck, /Qwen3_5ForCausalLM/);
+});
+
+test("CI resuelve las dependencias del trainer con la misma versión mayor de Python", () => {
+  assert.match(ci, /python-version: "3\.14"/);
+  assert.match(ci, /pip install --dry-run -r trainer\/requirements\.txt/);
 });
 
 test("train.py valida la arquitectura antes de cargar el modelo y no usa Dataset.map con lambda", () => {
