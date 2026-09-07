@@ -6,6 +6,8 @@ const server = await readFile(new URL("../trainer/gui_server.py", import.meta.ur
 const launcher = await readFile(new URL("../fine-tune-gui", import.meta.url), "utf8");
 const compose = await readFile(new URL("../docker-compose.yml", import.meta.url), "utf8");
 const gui = await readFile(new URL("../trainer/gui/index.html", import.meta.url), "utf8");
+const commands = await readFile(new URL("../comandos.fish", import.meta.url), "utf8");
+const trainer = await readFile(new URL("../trainer/train.py", import.meta.url), "utf8");
 
 test("la GUI de fine-tuning queda restringida a loopback", () => {
   assert.match(server, /default="127\.0\.0\.1"/);
@@ -43,4 +45,22 @@ test("entrenamiento y vLLM preparan adapters sin borrar su contenido", () => {
   assert.match(server, /owner=\{owner\}:\{group\}.*mode=\{mode\}/);
   assert.match(server, /sudo chown -R/);
   assert.doesNotMatch(server, /rmtree\(ADAPTER_DIR/);
+});
+
+test("GUI y CLI reutilizan la misma comprobación CUDA y NF4", () => {
+  assert.match(server, /check_environment\.py/);
+  assert.match(commands, /trainer\/check_environment\.py/);
+  assert.doesNotMatch(server, /CUDA_CHECK\s*=/);
+  assert.doesNotMatch(commands, /quantize_4bit/);
+});
+
+test("el CLI ya no documenta el flujo LoRA estático deprecado", () => {
+  assert.doesNotMatch(commands, /fine_tune_config/);
+  assert.doesNotMatch(commands, /--lora-modules/);
+});
+
+test("train.py publica el adaptador solo después de completar el staging", () => {
+  assert.match(trainer, /tempfile\.mkdtemp/);
+  assert.match(trainer, /staging\.rename\(destination\)/);
+  assert.match(trainer, /shutil\.rmtree\(staging, ignore_errors=True\)/);
 });
