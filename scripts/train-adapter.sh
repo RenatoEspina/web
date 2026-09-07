@@ -30,6 +30,15 @@ if [[ -z "$trainer_python" || ! -x "$trainer_python" ]]; then
   exit 1
 fi
 
+# Un venv existente no implica que siga siendo compatible con el repositorio.
+# Verifica los pins y la ruta de fingerprint de Hugging Face antes de reservar
+# VRAM. Si está desactualizado, sincroniza requirements.txt una sola vez.
+if ! "$trainer_python" trainer/check_dependencies.py; then
+  echo "== Sincronizando dependencias del fine-tuning =="
+  "$trainer_python" -m pip install -r trainer/requirements.txt
+  "$trainer_python" trainer/check_dependencies.py
+fi
+
 "$trainer_python" trainer/validate_dataset.py "$dataset"
 
 # El CLI de Fish usa este nombre de proyecto explícitamente. Mantenerlo aquí
