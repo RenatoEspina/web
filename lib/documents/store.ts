@@ -2,16 +2,14 @@ import { getDocumentConfig } from "./config";
 import type { DocumentSummary, IndexedDocument, KnowledgeSource } from "./types";
 
 type Workspace = Map<string, IndexedDocument>;
-
-const workspaces = new Map<string, Workspace>();
 type CagCacheEntry = {
-  signature: string;
   text: string;
   sources: KnowledgeSource[];
   embeddingUsed: boolean;
   truncated: boolean;
 };
 
+const workspaces = new Map<string, Workspace>();
 const cagContextCache = new Map<string, CagCacheEntry>();
 const workspaceActivity = new Map<string, number>();
 
@@ -118,11 +116,10 @@ export function getCachedCagContext(
 export function setCachedCagContext(
   workspaceId: string,
   documents: IndexedDocument[],
-  value: Omit<CagCacheEntry, "signature">,
+  value: CagCacheEntry,
   query?: string,
 ): void {
-  const key = cacheKey(workspaceId, documents, query);
-  cagContextCache.set(key, { signature: key, ...value });
+  cagContextCache.set(cacheKey(workspaceId, documents, query), value);
 }
 
 export function clearCagCache(workspaceId: string): void {
