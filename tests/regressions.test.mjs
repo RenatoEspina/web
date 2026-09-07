@@ -95,3 +95,67 @@ test("RAG solo publica fuentes cuyos fragmentos entraron al contexto", async () 
     else process.env.EMBEDDING_ENABLED = previousEmbeddingEnabled;
   }
 });
+
+test("RRF excluye candidatos con similitud semántica no positiva y sin señal léxica", async () => {
+  const { addDocument } = await vite.ssrLoadModule("/lib/documents/store.ts");
+  const { buildKnowledgeContext } = await vite.ssrLoadModule("/lib/documents/retrieval.ts");
+  const originalFetch = globalThis.fetch;
+  const previousEmbeddingEnvironment = {
+    enabled: process.env.EMBEDDING_ENABLED,
+    provider: process.env.EMBEDDING_PROVIDER,
+    model: process.env.EMBEDDING_MODEL,
+  };
+  const workspaceId = crypto.randomUUID();
+  const documentId = crypto.randomUUID();
+
+  process.env.EMBEDDING_ENABLED = "true";
+  process.env.EMBEDDING_PROVIDER = "ollama";
+  process.env.EMBEDDING_MODEL = "qwen3-embedding:4b";
+  globalThis.fetch = async () => new Response(JSON.stringify({ embeddings: [[1, 0]] }), { status: 200 });
+
+  try {
+    addDocument(workspaceId, {
+      id: documentId,
+      name: "semantica.pdf",
+      sizeBytes: 500,
+      pages: 2,
+      characters: 120,
+      createdAt: Date.now(),
+      embeddingProvider: "ollama",
+      embeddingModel: "qwen3-embedding:4b",
+      embeddingDimension: 2,
+      chunks: [
+        {
+          id: `${documentId}-0`,
+          documentId,
+          documentName: "semantica.pdf",
+          page: 1,
+          index: 0,
+          text: "Un fragmento conceptualmente relacionado sin palabras de la consulta.",
+          embedding: [1, 0],
+        },
+        {
+          id: `${documentId}-1`,
+          documentId,
+          documentName: "semantica.pdf",
+          page: 2,
+          index: 1,
+          text: "Un fragmento conceptualmente opuesto y también sin coincidencias.",
+          embedding: [-1, 0],
+        },
+      ],
+    });
+
+    const rag = await buildKnowledgeContext(workspaceId, "rag", "consulta ajena", [documentId]);
+    assert.equal(rag?.embeddingUsed, true);
+    assert.deepEqual(rag?.sources.map((source) => source.chunkId), [`${documentId}-0`]);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (previousEmbeddingEnvironment.enabled === undefined) delete process.env.EMBEDDING_ENABLED;
+    else process.env.EMBEDDING_ENABLED = previousEmbeddingEnvironment.enabled;
+    if (previousEmbeddingEnvironment.provider === undefined) delete process.env.EMBEDDING_PROVIDER;
+    else process.env.EMBEDDING_PROVIDER = previousEmbeddingEnvironment.provider;
+    if (previousEmbeddingEnvironment.model === undefined) delete process.env.EMBEDDING_MODEL;
+    else process.env.EMBEDDING_MODEL = previousEmbeddingEnvironment.model;
+  }
+});
