@@ -9,12 +9,13 @@ import re
 import shutil
 import tempfile
 import time
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
 import torch
 from datasets import Dataset
 from peft import LoraConfig, prepare_model_for_kbit_training
-from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 from trl import SFTConfig, SFTTrainer
 
 from dataset_validation import load_jsonl
@@ -40,14 +41,38 @@ def arguments() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def training_text(tokenizer, example: dict) -> dict[str, str]:
-    return {
-        "text": tokenizer.apply_chat_template(
-            example["messages"],
-            tokenize=False,
-            add_generation_prompt=False,
-        )
-    }
+def package_version(name: str) -> str:
+    try:
+        return version(name)
+    except PackageNotFoundError:
+        return "unknown"
+
+
+def validate_model_architecture(model_name: str) -> None:
+    """Falla antes de reservar VRAM si Transformers no conoce el checkpoint."""
+    try:
+        config = AutoConfig.from_pretrained(model_name, trust_remote_code=False)
+    except (KeyError, ValueError) as error:
+        raise RuntimeError(
+            f"Transformers {package_version('transformers')} no puede cargar la arquitectura de {model_name}. "
+            "Actualiza el entorno de fine-tuning desde la GUI o requirements.txt."
+        ) from error
+    print(f"Arquitectura: {config.model_type}")
+
+
+def format_dataset(tokenizer, examples: list[dict]) -> Dataset:
+    """Formatea en Python puro para no depender del fingerprint de Dataset.map."""
+    formatted = [
+        {
+            "text": tokenizer.apply_chat_template(
+                example["messages"],
+                tokenize=False,
+                add_generation_prompt=False,
+            )
+        }
+        for example in examples
+    ]
+    return Dataset.from_list(formatted)
 
 
 def main() -> None:
@@ -66,14 +91,13 @@ def main() -> None:
     staging = Path(tempfile.mkdtemp(prefix=f".{args.name}.training-", dir=output_root))
     try:
         examples, _ = load_jsonl(args.dataset)
+        validate_model_architecture(args.model)
+
         tokenizer = AutoTokenizer.from_pretrained(args.model, trust_remote_code=False)
         if tokenizer.pad_token is None:
             tokenizer.pad_token = tokenizer.eos_token
+        dataset = format_dataset(tokenizer, examples)
 
-        dataset = Dataset.from_list(examples).map(
-            lambda example: training_text(tokenizer, example),
-            remove_columns=["messages"],
-        )
         compute_dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
         quantization = BitsAndBytesConfig(
             load_in_4bit=True,
@@ -85,7 +109,7 @@ def main() -> None:
             args.model,
             quantization_config=quantization,
             device_map="auto",
-            torch_dtype=compute_dtype,
+            dtype=compute_dtype,
             trust_remote_code=False,
         )
         model.config.use_cache = False
@@ -117,7 +141,13 @@ def main() -> None:
             optim="paged_adamw_8bit",
             dataset_text_field="text",
         )
-        trainer = SFTTrainer(model=model, args=config, train_dataset=dataset, peft_config=lora)
+        trainer = SFTTrainer(
+            model=model,
+            args=config,
+            train_dataset=dataset,
+            processing_class=tokenizer,
+            peft_config=lora,
+        )
         result = trainer.train()
         trainer.model.save_pretrained(staging, safe_serialization=True)
         tokenizer.save_pretrained(staging)
@@ -146,7 +176,13 @@ def main() -> None:
                 for key, value in result.metrics.items()
                 if isinstance(value, (int, float))
             },
-            "versions": {"torch": torch.__version__},
+            "versions": {
+                "torch": torch.__version__,
+                "transformers": package_version("transformers"),
+                "trl": package_version("trl"),
+                "peft": package_version("peft"),
+                "datasets": package_version("datasets"),
+            },
         }
         (staging / "manifest.json").write_text(
             json.dumps(manifest, indent=2) + "\n",
