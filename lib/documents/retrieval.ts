@@ -168,6 +168,7 @@ async function rankChunks(query: string, chunks: DocumentChunk[]): Promise<Ranke
 
   return { ranked, embeddingUsed };
 }
+
 function sourceFor(chunk: DocumentChunk, result?: RankedChunk): KnowledgeSource {
   return {
     documentId: chunk.documentId,
@@ -207,16 +208,19 @@ async function buildRag(workspaceId: string, query: string, ids?: string[]): Pro
   const documents = selectedDocuments(workspaceId, ids);
   const { ranked: allRanked, embeddingUsed } = await rankChunks(query, documents.flatMap((document) => document.chunks));
   const ranked = allRanked.slice(0, config.topK);
-  const sources = ranked.map((result) => sourceFor(result.chunk, result));
+  const sources: KnowledgeSource[] = [];
   let remaining = config.maxRagContextCharacters;
   const blocks: string[] = [];
   let contextWasCut = false;
 
-  for (const { chunk } of ranked) {
+  for (const result of ranked) {
     if (remaining <= 0) break;
-    const fullBlock = contextBlock(chunk);
+    const fullBlock = contextBlock(result.chunk);
     const block = fullBlock.slice(0, remaining);
-    if (block) blocks.push(block);
+    if (!block) break;
+
+    blocks.push(block);
+    sources.push(sourceFor(result.chunk, result));
     if (block.length < fullBlock.length) contextWasCut = true;
     remaining -= block.length + 2;
   }
@@ -278,6 +282,7 @@ async function buildCag(workspaceId: string, _query: string, ids?: string[]): Pr
 
   return { mode: "cag", text, sources, cacheHit: false, embeddingUsed: false, truncated };
 }
+
 export async function buildKnowledgeContext(
   workspaceId: string,
   mode: "rag" | "cag",
