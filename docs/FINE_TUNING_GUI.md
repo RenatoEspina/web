@@ -106,7 +106,7 @@ Al pulsar **Preparar y entrenar**, la GUI:
 3. ejecuta `scripts/train-adapter.sh`;
 4. detiene vLLM si estaba activo para liberar GPU;
 5. descarga el modelo si no está completo en caché, usando el HF token si fue proporcionado;
-6. entrena QLoRA;
+6. conserva los roles de la conversación y entrena la pérdida solo sobre las respuestas del asistente;
 7. vuelve a iniciar vLLM si estaba activo antes del entrenamiento.
 
 El entrenador trabaja primero en un directorio temporal oculto y solo publica `adapters/<nombre>/` después de guardar correctamente pesos, tokenizer y `manifest.json`. Un fallo no deja un adaptador parcial bloqueando el mismo nombre.
@@ -138,6 +138,11 @@ POST /v1/unload_lora_adapter
 y retira el nombre de `LLM_ADAPTER_MODELS` para evitar que el selector del gateway anuncie un adaptador que ya no está cargado.
 
 Si la aplicación web ya estaba ejecutándose, reiníciala después de modificar la allowlist para que relea `.env.local`.
+
+Para eliminar un adaptador, primero pulsa **Descargar de vLLM** si está activo y
+después pulsa **Borrar**. La operación pide confirmación, retira el nombre de la
+allowlist y borra también la exportación de compatibilidad de vLLM. No es reversible
+desde la GUI.
 
 #### Qwen3.5: carga real de LoRA y comprobación A/B
 

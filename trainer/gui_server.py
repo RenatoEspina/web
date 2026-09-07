@@ -437,6 +437,50 @@ def loaded_adapter_path(name: str) -> str:
     raise RuntimeError(f"El adaptador {name} no aparece cargado en vLLM.")
 
 
+def adapter_is_loaded(name: str) -> bool:
+    running, models = fetch_vllm_models()
+    return running and name in models
+
+
+def delete_adapter(job: Job, name: str) -> None:
+    """Remove one persisted adapter only after it is unloaded from vLLM."""
+    directory = ADAPTER_DIR / name
+    if ADAPTER_DIR.is_symlink() or directory.is_symlink() or not directory.is_dir():
+        raise RuntimeError(f"No existe un adaptador válido llamado '{name}'.")
+    if directory.parent.resolve() != ADAPTER_DIR.resolve():
+        raise RuntimeError("La ruta del adaptador está fuera de adapters/.")
+    if adapter_is_loaded(name):
+        raise RuntimeError(f"Descarga primero el adaptador '{name}' de vLLM antes de borrarlo.")
+
+    export_base = ADAPTER_DIR / ".vllm-exports"
+    if export_base.is_symlink() or (export_base.exists() and not export_base.is_dir()):
+        raise RuntimeError("La caché de exportación no es una carpeta local válida.")
+    export_root = export_base / name
+    if export_root.is_symlink():
+        raise RuntimeError("La caché de exportación del adaptador no puede ser un enlace simbólico.")
+    if export_root.exists() and not export_root.is_dir():
+        raise RuntimeError("La caché de exportación del adaptador no es una carpeta válida.")
+
+    allowlist_removed = False
+    try:
+        ensure_adapter_dir_writable(job)
+        if export_root.exists():
+            shutil.rmtree(export_root)
+        # Retira la allowlist antes del borrado para que una futura
+        # reinicialización no intente cargar un adaptador que ya no existe.
+        allowlist_removed = set_adapter_allowed_in_env(name, False)
+        shutil.rmtree(directory)
+    except (OSError, RuntimeError) as error:
+        if allowlist_removed:
+            try:
+                set_adapter_allowed_in_env(name, True)
+            except (OSError, RuntimeError):
+                append_log(job, f"No se pudo restaurar la allowlist tras el borrado incompleto de {name}.")
+        raise RuntimeError(f"No se pudo borrar el adaptador '{name}': {error}") from error
+
+    append_log(job, f"Adaptador {name} borrado de adapters/ y de su caché de exportación.")
+
+
 def rollback_adapter_runtime(name: str, allowed: bool, runtime_path: str | None = None) -> None:
     """Revierte en vLLM el cambio que ocurrió antes de actualizar la allowlist."""
     if allowed:
@@ -449,7 +493,7 @@ def rollback_adapter_runtime(name: str, allowed: bool, runtime_path: str | None 
 
 
 def set_adapter_allowed_in_env(name: str, allowed: bool, *, rollback_runtime: bool = False,
-                               runtime_path: str | None = None) -> None:
+                               runtime_path: str | None = None) -> bool:
     env_file = ROOT / ".env.local"
     temporary = env_file.with_suffix(env_file.suffix + ".tmp")
     try:
@@ -461,24 +505,32 @@ def set_adapter_allowed_in_env(name: str, allowed: bool, *, rollback_runtime: bo
         )
         if entry_index is None:
             if not allowed:
-                return
+                return False
             if lines and lines[-1].strip():
                 lines.append("")
             lines.extend(["# Adaptadores LoRA permitidos por el gateway.", f"LLM_ADAPTER_MODELS={name}"])
+            changed = True
         else:
             current = [
                 item.strip()
                 for item in lines[entry_index].split("=", 1)[1].split(",")
                 if item.strip()
             ]
+            updated = list(current)
             if allowed and name not in current:
-                current.append(name)
+                updated.append(name)
             if not allowed:
-                current = [item for item in current if item != name]
-            lines[entry_index] = "LLM_ADAPTER_MODELS=" + ",".join(current)
+                updated = [item for item in updated if item != name]
+            changed = updated != current
+            if changed:
+                lines[entry_index] = "LLM_ADAPTER_MODELS=" + ",".join(updated)
+
+        if not changed:
+            return False
 
         temporary.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
         os.replace(temporary, env_file)
+        return True
     except OSError as error:
         try:
             temporary.unlink(missing_ok=True)
@@ -546,9 +598,9 @@ def run_action(job: Job, payload: dict[str, Any]) -> None:
         if rank not in {8, 16, 32}:
             raise ValueError("rank debe ser 8, 16 o 32.")
         alpha = int_arg(payload, "alpha", 32, 1, 256)
-        epochs = number_arg(payload, "epochs", 3.0, 0.1, 20.0)
+        epochs = number_arg(payload, "epochs", 2.0, 0.1, 20.0)
         dropout = number_arg(payload, "dropout", 0.05, 0.0, 0.5)
-        learning_rate = number_arg(payload, "learningRate", 2e-4, 1e-7, 0.1)
+        learning_rate = number_arg(payload, "learningRate", 1e-4, 1e-7, 0.1)
         batch_size = int_arg(payload, "batchSize", 1, 1, 32)
         gradient_accumulation = int_arg(payload, "gradientAccumulation", 8, 1, 256)
         max_length = int_arg(payload, "maxLength", 1024, 128, 16384)
@@ -622,6 +674,11 @@ def run_action(job: Job, payload: dict[str, Any]) -> None:
         append_log(job, "Efecto del LoRA detectado. Esto no mide la calidad de las respuestas.")
         job.result = {"adapter": name, "inferenceVerified": True}
         return
+    if action == "delete-adapter":
+        name = validate_adapter_name(payload.get("name"))
+        delete_adapter(job, name)
+        job.result = {"adapter": name, "deleted": True, "allowlistUpdated": True}
+        return
     if action in {"load-adapter", "unload-adapter"}:
         name = validate_adapter_name(payload.get("name"))
         directory = ADAPTER_DIR / name
@@ -688,7 +745,7 @@ def job_worker(job: Job, payload: dict[str, Any]) -> None:
 
 
 def start_job(action: str, payload: dict[str, Any]) -> Job:
-    allowed = {"setup", "check", "train", "start-vllm", "stop-vllm", "load-adapter", "unload-adapter", "verify-adapter"}
+    allowed = {"setup", "check", "train", "start-vllm", "stop-vllm", "load-adapter", "unload-adapter", "verify-adapter", "delete-adapter"}
     if action not in allowed:
         raise ValueError("Acción no permitida.")
     global CURRENT_JOB
