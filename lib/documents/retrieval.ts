@@ -4,10 +4,12 @@ import { getDocumentConfig } from "./config";
 import { getCachedCagContext, getDocuments, setCachedCagContext } from "./store";
 import type { DocumentChunk, IndexedDocument, KnowledgeContext, KnowledgeSource } from "./types";
 
+// `terms()` elimina diacríticos antes de consultar este conjunto, por lo que
+// las stop words se mantienen en la misma representación normalizada.
 const STOP_WORDS = new Set([
-  "a", "al", "algo", "con", "como", "cual", "de", "del", "el", "ella", "ellas", "ellos",
-  "en", "es", "esta", "este", "estos", "ha", "hay", "la", "las", "lo", "los", "más", "me",
-  "mi", "mis", "o", "para", "por", "que", "qué", "se", "su", "sus", "un", "una", "unas", "uno",
+  "a", "al", "algo", "con", "como", "cual", "cuando", "de", "del", "donde", "el", "ella", "ellas", "ellos",
+  "en", "es", "esta", "este", "estos", "ha", "hay", "la", "las", "lo", "los", "mas", "me",
+  "mi", "mis", "o", "para", "por", "que", "quien", "se", "su", "sus", "un", "una", "unas", "uno",
   "unos", "y", "ya", "the", "of", "to", "in", "is", "are", "and", "or", "for", "with",
 ]);
 
@@ -117,7 +119,6 @@ async function rankChunks(query: string, chunks: DocumentChunk[]): Promise<Ranke
   const config = getDocumentConfig();
   const lexicalScores = scoreLexically(query, chunks);
   const semanticScores: Array<number | undefined> = chunks.map(() => undefined);
-  let embeddingUsed = false;
 
   const hasStoredEmbeddings = chunks.some((chunk) => Array.isArray(chunk.embedding) && chunk.embedding.length > 0);
   if (hasStoredEmbeddings) {
@@ -129,7 +130,6 @@ async function rankChunks(query: string, chunks: DocumentChunk[]): Promise<Ranke
           const score = cosineSimilarity(queryEmbedding, chunk.embedding);
           if (score !== null) semanticScores[index] = Math.max(-1, Math.min(1, score));
         });
-        embeddingUsed = semanticScores.some((score) => score !== undefined && score > 0);
       }
     } catch (error) {
       console.error("[llm-bridge] Semantic retrieval failed; using lexical retrieval", error);
@@ -140,8 +140,13 @@ async function rankChunks(query: string, chunks: DocumentChunk[]): Promise<Ranke
   const semanticWeight = weightTotal > 0 ? config.semanticWeight / weightTotal : 0.7;
   const lexicalWeight = weightTotal > 0 ? config.lexicalWeight / weightTotal : 0.3;
   const candidateLimit = Math.min(chunks.length, Math.max(config.topK * 4, config.topK));
-  const semanticRanks = rankPositions(semanticScores, (score) => score > 0, candidateLimit);
+  const semanticRanks = rankPositions(
+    semanticScores,
+    (score) => score >= config.minSemanticScore,
+    candidateLimit,
+  );
   const lexicalRanks = rankPositions(lexicalScores, (score) => score > 0, candidateLimit);
+  const embeddingUsed = semanticRanks.some((rank) => rank !== undefined);
 
   const ranked = chunks
     .map((chunk, index) => {
@@ -155,7 +160,8 @@ async function rankChunks(query: string, chunks: DocumentChunk[]): Promise<Ranke
       return {
         chunk,
         // RRF fusiona rankings heterogéneos sin asumir que cosine y TF-IDF
-        // comparten escala o significado.
+        // comparten escala o significado. Si ningún embedding supera el umbral,
+        // el ranking vuelve a ser exclusivamente léxico.
         score: embeddingUsed ? fusedScore : lexicalScores[index],
         lexicalScore: lexicalScores[index],
         ...(semanticScores[index] === undefined ? {} : { semanticScore: semanticScores[index] }),
@@ -164,7 +170,9 @@ async function rankChunks(query: string, chunks: DocumentChunk[]): Promise<Ranke
     .filter((result) => result.score > 0)
     .sort((left, right) => (
       right.score - left.score ||
-      (right.semanticScore ?? -Infinity) - (left.semanticScore ?? -Infinity) ||
+      (embeddingUsed
+        ? (right.semanticScore ?? -Infinity) - (left.semanticScore ?? -Infinity)
+        : 0) ||
       right.lexicalScore - left.lexicalScore ||
       left.chunk.index - right.chunk.index
     ));
@@ -194,8 +202,15 @@ function pageLabel(chunk: DocumentChunk): string {
     : `página ${chunk.page}`;
 }
 
+function neutralizeDocumentDelimiters(value: string): string {
+  return value.replace(/<\s*(\/?)\s*documentos\s*>/giu, (_match, closing: string) => (
+    closing ? "[/documentos]" : "[documentos]"
+  ));
+}
+
 function contextBlock(chunk: DocumentChunk): string {
-  return `[Documento: ${chunk.documentName} | ${pageLabel(chunk)}]\n${chunk.text}`;
+  const documentName = JSON.stringify(chunk.documentName);
+  return `[Documento: ${documentName} | ${pageLabel(chunk)}]\n${neutralizeDocumentDelimiters(chunk.text)}`;
 }
 
 function selectedDocuments(workspaceId: string, ids?: string[]): IndexedDocument[] {
@@ -206,9 +221,8 @@ function estimatedContextCharacters(chunks: DocumentChunk[]): number {
   return chunks.reduce((total, chunk) => total + contextBlock(chunk).length + 2, 0);
 }
 
-async function buildRag(workspaceId: string, query: string, ids?: string[]): Promise<KnowledgeContext> {
+async function buildRag(documents: IndexedDocument[], query: string): Promise<KnowledgeContext> {
   const config = getDocumentConfig();
-  const documents = selectedDocuments(workspaceId, ids);
   const { ranked: allRanked, embeddingUsed } = await rankChunks(query, documents.flatMap((document) => document.chunks));
   const ranked = allRanked.slice(0, config.topK);
   const sources: KnowledgeSource[] = [];
@@ -238,9 +252,8 @@ async function buildRag(workspaceId: string, query: string, ids?: string[]): Pro
   };
 }
 
-async function buildCag(workspaceId: string, _query: string, ids?: string[]): Promise<KnowledgeContext> {
+function buildCag(workspaceId: string, documents: IndexedDocument[]): KnowledgeContext {
   const config = getDocumentConfig();
-  const documents = selectedDocuments(workspaceId, ids);
   const allChunks = documents.flatMap((document) => document.chunks);
   const completeContextFits = estimatedContextCharacters(allChunks) <= config.maxCagContextCharacters;
   const cached = getCachedCagContext(workspaceId, documents);
@@ -279,7 +292,6 @@ async function buildCag(workspaceId: string, _query: string, ids?: string[]): Pr
   setCachedCagContext(workspaceId, documents, {
     text,
     sources,
-    embeddingUsed: false,
     truncated,
   });
 
@@ -294,5 +306,5 @@ export async function buildKnowledgeContext(
 ): Promise<KnowledgeContext | null> {
   const documents = selectedDocuments(workspaceId, ids);
   if (documents.length === 0) return null;
-  return mode === "rag" ? buildRag(workspaceId, query, ids) : buildCag(workspaceId, query, ids);
+  return mode === "rag" ? buildRag(documents, query) : buildCag(workspaceId, documents);
 }
