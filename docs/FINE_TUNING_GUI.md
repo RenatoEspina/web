@@ -139,6 +139,36 @@ y retira el nombre de `LLM_ADAPTER_MODELS` para evitar que el selector del gatew
 
 Si la aplicación web ya estaba ejecutándose, reiníciala después de modificar la allowlist para que relea `.env.local`.
 
+#### Qwen3.5: carga real de LoRA y comprobación A/B
+
+El modelo de texto de Transformers guarda módulos `model.layers.*`, mientras
+vLLM 0.24.0 usa `language_model.model.layers.*` en su wrapper Qwen3.5, incluso
+con `--language-model-only`. Registrar el adaptador en `/v1/models` no prueba
+que los pesos estén aplicándose.
+
+La GUI exporta Qwen3.5 automáticamente con el prefijo HF
+`model.language_model.layers.*`, que el mapper de vLLM convierte al namespace
+correcto. Guarda la copia en `adapters/.vllm-exports/<nombre>/<hash>/`, sin modificar
+los archivos PEFT, checkpoints o manifiesto originales. La exportación se hace
+en CPU, se publica al terminar y verifica hashes antes de reutilizarla. Un namespace
+desconocido falla explícitamente. Los demás modelos no se renombrarán.
+
+Si el LoRA ya estaba cargado con la ruta anterior, descárgalo y vuelve a cargarlo.
+**Comprobar uso** ejecuta `trainer/verify_lora.py` y compara base repetida contra
+adaptador en tres prompts. Detectar efecto no mide calidad ni garantiza que cada
+tensor se aplique. La GUI informa una prueba inconclusa como tal.
+
+La [prueba local registrada](verification/lora-runtime-2026-09-07.json) con
+`qwen-es-v1` muestra 372/372 nombres exportados en el namespace esperado,
+probabilidades idénticas al modelo base sin convertir y efecto detectado en
+los tres prompts después de la exportación. Se usó vLLM 0.24.0.
+
+Un fallo al actualizar la allowlist después de descargar restaura la ruta exacta
+que tenía el runtime, incluida una exportación o una ruta heredada.
+
+Para experimentar con el corpus incluido, sigue la
+[guía de Terraria](TERRARIA_FINE_TUNING.md).
+
 ## Seguridad local
 
 El panel es una herramienta administrativa local:

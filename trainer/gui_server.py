@@ -27,6 +27,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from dataset_validation import load_jsonl
+from vllm_export import export_destination, needs_export, read_config, validate_export
 
 ROOT = Path(__file__).resolve().parents[1]
 TRAINER_DIR = ROOT / "trainer"
@@ -410,18 +411,45 @@ def post_vllm(path: str, payload: dict[str, str]) -> str:
         raise RuntimeError("vLLM no está disponible en 127.0.0.1:8000.") from error
 
 
-def rollback_adapter_runtime(name: str, allowed: bool) -> None:
+def prepare_runtime_adapter(job: Job, name: str) -> str:
+    directory = ADAPTER_DIR / name
+    if directory.is_symlink():
+        raise ValueError("El adaptador no puede ser un enlace simbólico.")
+    config, manifest = read_config(directory)
+    if not needs_export(config, manifest):
+        return f"/adapters/{name}"
+    ensure_adapter_dir_writable(job)
+    run_command(job, [str(trainer_python()), str(TRAINER_DIR / "vllm_export.py"), str(directory)],
+                label="Preparando namespace LoRA para vLLM (originales conservados)")
+    destination = export_destination(directory)
+    metadata = validate_export(destination)
+    append_log(job, f"Exportación verificada: {metadata['tensors']} tensores, {metadata['renamed']} nombres adaptados.")
+    return "/adapters/" + destination.relative_to(ADAPTER_DIR).as_posix()
+
+
+def loaded_adapter_path(name: str) -> str:
+    """Capture the actual runtime path BEFORE unloading, including legacy paths."""
+    with urlopen("http://127.0.0.1:8000/v1/models", timeout=5) as response:
+        models = json.load(response).get("data", [])
+    for model in models:
+        if model.get("id") == name and model.get("parent") and isinstance(model.get("root"), str):
+            return model["root"]
+    raise RuntimeError(f"El adaptador {name} no aparece cargado en vLLM.")
+
+
+def rollback_adapter_runtime(name: str, allowed: bool, runtime_path: str | None = None) -> None:
     """Revierte en vLLM el cambio que ocurrió antes de actualizar la allowlist."""
     if allowed:
         post_vllm("/v1/unload_lora_adapter", {"lora_name": name})
     else:
         post_vllm(
             "/v1/load_lora_adapter",
-            {"lora_name": name, "lora_path": f"/adapters/{name}"},
+            {"lora_name": name, "lora_path": runtime_path or f"/adapters/{name}"},
         )
 
 
-def set_adapter_allowed_in_env(name: str, allowed: bool, *, rollback_runtime: bool = False) -> None:
+def set_adapter_allowed_in_env(name: str, allowed: bool, *, rollback_runtime: bool = False,
+                               runtime_path: str | None = None) -> None:
     env_file = ROOT / ".env.local"
     temporary = env_file.with_suffix(env_file.suffix + ".tmp")
     try:
@@ -459,7 +487,7 @@ def set_adapter_allowed_in_env(name: str, allowed: bool, *, rollback_runtime: bo
         if not rollback_runtime:
             raise RuntimeError(f"No fue posible actualizar {env_file.name}: {error}") from error
         try:
-            rollback_adapter_runtime(name, allowed)
+            rollback_adapter_runtime(name, allowed, runtime_path)
         except Exception as rollback_error:
             raise RuntimeError(
                 f"No fue posible actualizar {env_file.name} y también falló el rollback de vLLM. "
@@ -583,16 +611,28 @@ def run_action(job: Job, payload: dict[str, Any]) -> None:
         )
         job.result = {"vllm": "stopped"}
         return
+    if action == "verify-adapter":
+        name = validate_adapter_name(payload.get("name"))
+        loaded_adapter_path(name)
+        config, manifest = read_config(ADAPTER_DIR / name)
+        base_model = validate_model(config.get("base_model_name_or_path") or manifest.get("baseModel"))
+        run_command(job, [str(trainer_python()), str(TRAINER_DIR / "verify_lora.py"),
+                          "--base-model", base_model, "--adapter", name],
+                    label="Comparando probabilidades: base repetida vs LoRA")
+        append_log(job, "Efecto del LoRA detectado. Esto no mide la calidad de las respuestas.")
+        job.result = {"adapter": name, "inferenceVerified": True}
+        return
     if action in {"load-adapter", "unload-adapter"}:
         name = validate_adapter_name(payload.get("name"))
         directory = ADAPTER_DIR / name
         if action == "load-adapter":
             if not (directory / "adapter_config.json").is_file() or not (directory / "adapter_model.safetensors").is_file():
                 raise RuntimeError("El adaptador no contiene los archivos PEFT esperados.")
+            runtime_path = prepare_runtime_adapter(job, name)
             append_log(job, f"Cargando {name} en vLLM...")
             response = post_vllm(
                 "/v1/load_lora_adapter",
-                {"lora_name": name, "lora_path": f"/adapters/{name}"},
+                {"lora_name": name, "lora_path": runtime_path},
             )
             append_log(job, response or "Adaptador cargado.")
             set_adapter_allowed_in_env(name, True, rollback_runtime=True)
@@ -603,14 +643,17 @@ def run_action(job: Job, payload: dict[str, Any]) -> None:
             job.result = {
                 "adapter": name,
                 "runtimeLoaded": True,
+                "runtimePath": runtime_path,
+                "inferenceVerified": False,
                 "allowlistUpdated": True,
                 "gatewayRestartRequired": True,
             }
         else:
+            runtime_path = loaded_adapter_path(name)
             append_log(job, f"Descargando {name} de vLLM...")
             response = post_vllm("/v1/unload_lora_adapter", {"lora_name": name})
             append_log(job, response or "Adaptador descargado.")
-            set_adapter_allowed_in_env(name, False, rollback_runtime=True)
+            set_adapter_allowed_in_env(name, False, rollback_runtime=True, runtime_path=runtime_path)
             append_log(
                 job,
                 "Adaptador retirado de LLM_ADAPTER_MODELS. Si la web ya estaba activa, reiníciala para que relea el entorno.",
@@ -645,7 +688,7 @@ def job_worker(job: Job, payload: dict[str, Any]) -> None:
 
 
 def start_job(action: str, payload: dict[str, Any]) -> Job:
-    allowed = {"setup", "check", "train", "start-vllm", "stop-vllm", "load-adapter", "unload-adapter"}
+    allowed = {"setup", "check", "train", "start-vllm", "stop-vllm", "load-adapter", "unload-adapter", "verify-adapter"}
     if action not in allowed:
         raise ValueError("Acción no permitida.")
     global CURRENT_JOB

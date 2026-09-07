@@ -502,7 +502,7 @@ export default function Home() {
         <div className="bridge-meta" aria-label="Configuración activa">
           <span><span className="meta-key">PROVIDER</span> {providerLabel}</span>
           <span className="meta-separator">/</span>
-          <span className="model-name" title={config?.model}>{config?.model ?? "cargando configuración"}</span>
+          <span className="model-name" title={selectedModel || config?.model}>{selectedModel || config?.model || "cargando configuración"}</span>
           <span className="meta-spacer" />
           {config && config.models.length > 1 && <Select value={selectedModel} onValueChange={setSelectedModel}><SelectTrigger className="knowledge-select" aria-label="Modelo o adaptador"><SelectValue /></SelectTrigger><SelectContent>{config.models.map((model) => <SelectItem value={model} key={model}>{model}</SelectItem>)}</SelectContent></Select>}
           <Link href="/fine-tune" className="token-link"><FlaskConical size={13} /> Fine-tuning</Link>

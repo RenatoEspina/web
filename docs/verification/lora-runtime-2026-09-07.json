@@ -1,0 +1,184 @@
+{
+  "date": "2026-09-07",
+  "runtime": "vLLM 0.24.0",
+  "baseModel": "Qwen/Qwen3.5-0.8B",
+  "adapter": "qwen-es-v1",
+  "dataset": "trainer/examples/base-training.jsonl",
+  "originalsPreserved": true,
+  "originalTensorNamespaceMatches": 0,
+  "exportTensorNamespaceMatches": 372,
+  "totalTensors": 372,
+  "interpretation": "A/B evidence of inference effect, not a quality evaluation or proof all tensor modules are applied.",
+  "original": {
+    "baseModel": "Qwen/Qwen3.5-0.8B",
+    "adapter": "qwen-es-v1-unfixed",
+    "status": "inconclusive",
+    "note": "Un cambio de probabilidades no demuestra mejor calidad ni que se apliquen todos los tensores.",
+    "cases": [
+      {
+        "prompt": "¿Qué ocurre si uso get con una clave inexistente en un HashMap? Responde brevemente en español.",
+        "baseRepeatDelta": 0,
+        "adapterDelta": 0,
+        "effectDetected": false,
+        "base": {
+          "text": "Si",
+          "top": {
+            "Si": -1.0021631717681885,
+            "Cuando": -1.3146631717681885,
+            "Al": -1.8927881717681885,
+            "No": -2.8771631717681885,
+            "La": -3.9709131717681885
+          }
+        },
+        "adapter": {
+          "text": "Si",
+          "top": {
+            "Si": -1.0021631717681885,
+            "Cuando": -1.3146631717681885,
+            "Al": -1.8927881717681885,
+            "No": -2.8771631717681885,
+            "La": -3.9709131717681885
+          }
+        }
+      },
+      {
+        "prompt": "¿Cuándo conviene usar RAG en vez de fine-tuning? Responde en una frase.",
+        "baseRepeatDelta": 0,
+        "adapterDelta": 0,
+        "effectDetected": false,
+        "base": {
+          "text": "R",
+          "top": {
+            "R": -1.2707728147506714,
+            "La": -2.270772933959961,
+            "El": -2.473897933959961,
+            "Cuando": -2.880147933959961,
+            " R": -3.137960433959961
+          }
+        },
+        "adapter": {
+          "text": "R",
+          "top": {
+            "R": -1.2707728147506714,
+            "La": -2.270772933959961,
+            "El": -2.473897933959961,
+            "Cuando": -2.880147933959961,
+            " R": -3.137960433959961
+          }
+        }
+      },
+      {
+        "prompt": "Explica brevemente cómo empezar una partida de Terraria.",
+        "baseRepeatDelta": 0,
+        "adapterDelta": 0,
+        "effectDetected": false,
+        "base": {
+          "text": "Para",
+          "top": {
+            "Para": -1.1882507801055908,
+            "Emp": -1.4695007801055908,
+            "Em": -1.6570007801055908,
+            "Com": -1.6570007801055908,
+            "Cl": -4.907000541687012
+          }
+        },
+        "adapter": {
+          "text": "Para",
+          "top": {
+            "Para": -1.1882507801055908,
+            "Emp": -1.4695007801055908,
+            "Em": -1.6570007801055908,
+            "Com": -1.6570007801055908,
+            "Cl": -4.907000541687012
+          }
+        }
+      }
+    ]
+  },
+  "corrected": {
+    "baseModel": "Qwen/Qwen3.5-0.8B",
+    "adapter": "qwen-es-v1-verify",
+    "status": "effect_detected",
+    "note": "Un cambio de probabilidades no demuestra mejor calidad ni que se apliquen todos los tensores.",
+    "cases": [
+      {
+        "prompt": "¿Qué ocurre si uso get con una clave inexistente en un HashMap? Responde brevemente en español.",
+        "baseRepeatDelta": 0,
+        "adapterDelta": 1,
+        "effectDetected": true,
+        "base": {
+          "text": "Si",
+          "top": {
+            "Si": -1.0021631717681885,
+            "Cuando": -1.3146631717681885,
+            "Al": -1.8927881717681885,
+            "No": -2.8771631717681885,
+            "La": -3.9709131717681885
+          }
+        },
+        "adapter": {
+          "text": "No",
+          "top": {
+            "No": -2.3355610370635986,
+            "Se": -2.4371235370635986,
+            "La": -3.0777485370635986,
+            "El": -3.3277485370635986,
+            "`": -3.3511860370635986
+          }
+        }
+      },
+      {
+        "prompt": "¿Cuándo conviene usar RAG en vez de fine-tuning? Responde en una frase.",
+        "baseRepeatDelta": 0,
+        "adapterDelta": 1,
+        "effectDetected": true,
+        "base": {
+          "text": "R",
+          "top": {
+            "R": -1.2707728147506714,
+            "La": -2.270772933959961,
+            "El": -2.473897933959961,
+            "Cuando": -2.880147933959961,
+            " R": -3.137960433959961
+          }
+        },
+        "adapter": {
+          "text": "R",
+          "top": {
+            "R": -0.8147890567779541,
+            "Cuando": -2.236664056777954,
+            "Para": -2.736664056777954,
+            "El": -2.767914056777954,
+            "La": -2.939789056777954
+          }
+        }
+      },
+      {
+        "prompt": "Explica brevemente cómo empezar una partida de Terraria.",
+        "baseRepeatDelta": 0,
+        "adapterDelta": 1,
+        "effectDetected": true,
+        "base": {
+          "text": "Para",
+          "top": {
+            "Para": -1.1882507801055908,
+            "Emp": -1.4695007801055908,
+            "Em": -1.6570007801055908,
+            "Com": -1.6570007801055908,
+            "Cl": -4.907000541687012
+          }
+        },
+        "adapter": {
+          "text": "1",
+          "top": {
+            "1": -1.1095890998840332,
+            "Emp": -1.8283390998840332,
+            "Com": -2.359589099884033,
+            "¡": -3.203339099884033,
+            "Prim": -3.328339099884033
+          }
+        }
+      }
+    ]
+  }
+}

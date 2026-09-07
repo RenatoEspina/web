@@ -48,7 +48,7 @@ def package_version(name: str) -> str:
         return "unknown"
 
 
-def validate_model_architecture(model_name: str) -> None:
+def validate_model_architecture(model_name: str) -> str:
     """Falla antes de reservar VRAM si Transformers no conoce el checkpoint."""
     try:
         config = AutoConfig.from_pretrained(model_name, trust_remote_code=False)
@@ -58,6 +58,7 @@ def validate_model_architecture(model_name: str) -> None:
             "Actualiza el entorno de fine-tuning desde la GUI o requirements.txt."
         ) from error
     print(f"Arquitectura: {config.model_type}")
+    return config.model_type
 
 
 def format_dataset(tokenizer, examples: list[dict]) -> Dataset:
@@ -91,7 +92,7 @@ def main() -> None:
     staging = Path(tempfile.mkdtemp(prefix=f".{args.name}.training-", dir=output_root))
     try:
         examples, _ = load_jsonl(args.dataset)
-        validate_model_architecture(args.model)
+        model_type = validate_model_architecture(args.model)
 
         tokenizer = AutoTokenizer.from_pretrained(args.model, trust_remote_code=False)
         if tokenizer.pad_token is None:
@@ -156,6 +157,7 @@ def main() -> None:
             "schemaVersion": 1,
             "name": args.name,
             "baseModel": args.model,
+            "modelType": model_type,
             "method": "SFT_QLORA",
             "createdAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "dataset": str(args.dataset.resolve()),

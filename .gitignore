@@ -48,3 +48,4 @@ next-env.d.ts
 /trainer/.venv/
 /trainer/__pycache__/
 /tests/__pycache__/
+/trainer/corpora/**/__pycache__/
