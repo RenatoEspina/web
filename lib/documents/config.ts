@@ -6,6 +6,14 @@ function readNumber(name: string, fallback: number, min: number, max: number): n
   return Math.min(max, Math.max(min, Math.floor(value)));
 }
 
+function readDecimal(name: string, fallback: number, min: number, max: number): number {
+  if (typeof process === "undefined") return fallback;
+
+  const value = Number(process.env[name]);
+  if (!Number.isFinite(value)) return fallback;
+  return Math.min(max, Math.max(min, value));
+}
+
 export function getDocumentConfig() {
   return {
     maxPdfBytes: readNumber("RAG_MAX_PDF_BYTES", 10 * 1024 * 1024, 1_024, 25 * 1024 * 1024),
@@ -18,6 +26,7 @@ export function getDocumentConfig() {
     topK: readNumber("RAG_TOP_K", 4, 1, 12),
     semanticWeight: readNumber("RAG_SEMANTIC_WEIGHT", 70, 0, 100) / 100,
     lexicalWeight: readNumber("RAG_LEXICAL_WEIGHT", 30, 0, 100) / 100,
+    minSemanticScore: readDecimal("RAG_MIN_SEMANTIC_SCORE", 0.2, -1, 1),
     maxRagContextCharacters: readNumber("RAG_MAX_CONTEXT_CHARACTERS", 7_000, 1_000, 30_000),
     maxCagContextCharacters: readNumber("CAG_MAX_CONTEXT_CHARACTERS", 8_000, 1_000, 30_000),
   };
