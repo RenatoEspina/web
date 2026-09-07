@@ -1,7 +1,8 @@
 import { buildKnowledgeContext, type KnowledgeMode } from "@/lib/documents";
 import { withKnowledge } from "@/lib/documents/prompt";
+import { errorResponse, isAuthorized, workspaceIdFrom } from "@/lib/http/request";
 import { complete } from "@/lib/llm";
-import { getAllowedModels, getAppToken, getLlmConfig } from "@/lib/llm/config";
+import { getAllowedModels, getLlmConfig } from "@/lib/llm/config";
 import type { ChatMessage, ChatRole } from "@/lib/llm/types";
 
 export const dynamic = "force-dynamic";
@@ -10,19 +11,6 @@ const MAX_MESSAGE_CHARS = 12_000;
 const MAX_HISTORY_ITEMS = 20;
 const MAX_HISTORY_CHARS = 8_000;
 const MAX_KNOWLEDGE_HISTORY_CHARS = 4_000;
-const WORKSPACE_ID_PATTERN = /^[A-Za-z0-9_-]{16,80}$/;
-
-function unauthorized(request: Request): boolean {
-  const appToken = getAppToken();
-  if (!appToken) return false;
-
-  const authorization = request.headers.get("authorization") ?? "";
-  const suppliedToken = authorization.startsWith("Bearer ")
-    ? authorization.slice("Bearer ".length).trim()
-    : request.headers.get("x-app-token") ?? "";
-
-  return suppliedToken !== appToken;
-}
 
 function isRole(value: unknown): value is Exclude<ChatRole, "system"> {
   return value === "user" || value === "assistant";
@@ -59,7 +47,8 @@ function knowledgeMode(value: unknown): KnowledgeMode {
   return value === "rag" || value === "cag" ? value : "none";
 }
 
-function documentIds(value: unknown): string[] {
+function documentIds(value: unknown): string[] | undefined {
+  if (value === undefined) return undefined;
   if (!Array.isArray(value)) return [];
   return [...new Set(value
     .filter((item): item is string => typeof item === "string" && /^[A-Za-z0-9-]{16,100}$/.test(item))
@@ -67,23 +56,23 @@ function documentIds(value: unknown): string[] {
 }
 
 export async function POST(request: Request) {
-  if (unauthorized(request)) {
-    return Response.json({ error: "Se requiere una clave de acceso." }, { status: 401 });
+  if (!isAuthorized(request)) {
+    return errorResponse("Se requiere una clave de acceso.", 401);
   }
 
   let body: { message?: unknown; history?: unknown; mode?: unknown; documentIds?: unknown; model?: unknown };
   try {
     body = (await request.json()) as { message?: unknown; history?: unknown; mode?: unknown; documentIds?: unknown; model?: unknown };
   } catch {
-    return Response.json({ error: "El cuerpo de la petición no es JSON válido." }, { status: 400 });
+    return errorResponse("El cuerpo de la petición no es JSON válido.", 400);
   }
 
   const message = typeof body.message === "string" ? body.message.trim() : "";
   if (!message) {
-    return Response.json({ error: "Escribe un mensaje antes de enviarlo." }, { status: 400 });
+    return errorResponse("Escribe un mensaje antes de enviarlo.", 400);
   }
   if (message.length > MAX_MESSAGE_CHARS) {
-    return Response.json({ error: `El mensaje supera el límite de ${MAX_MESSAGE_CHARS} caracteres.` }, { status: 413 });
+    return errorResponse(`El mensaje supera el límite de ${MAX_MESSAGE_CHARS} caracteres.`, 413);
   }
 
   const mode = knowledgeMode(body.mode);
@@ -95,15 +84,16 @@ export async function POST(request: Request) {
     allowedModels = getAllowedModels(config.model);
   } catch (error) {
     console.error("[llm-bridge] Invalid LLM configuration", error);
-    return Response.json({ error: "La configuración del proveedor no es válida." }, { status: 500 });
+    return errorResponse("La configuración del proveedor no es válida.", 500);
   }
   if (model && !allowedModels.includes(model)) {
-    return Response.json({ error: "El modelo o adaptador solicitado no está habilitado." }, { status: 400 });
+    return errorResponse("El modelo o adaptador solicitado no está habilitado.", 400);
   }
+
   const selectedDocumentIds = documentIds(body.documentIds);
-  const workspaceId = request.headers.get("x-workspace-id")?.trim() ?? "";
-  if (mode !== "none" && !WORKSPACE_ID_PATTERN.test(workspaceId)) {
-    return Response.json({ error: "El espacio de documentos no es válido." }, { status: 400 });
+  const workspaceId = workspaceIdFrom(request);
+  if (mode !== "none" && !workspaceId) {
+    return errorResponse("El espacio de documentos no es válido.", 400);
   }
 
   const history = limitHistory(
@@ -118,7 +108,7 @@ export async function POST(request: Request) {
   try {
     const knowledge = mode === "none"
       ? null
-      : await buildKnowledgeContext(workspaceId, mode, message, selectedDocumentIds);
+      : await buildKnowledgeContext(workspaceId!, mode, message, selectedDocumentIds);
     const requestMessages = knowledge ? withKnowledge(messages, knowledge) : messages;
     const selectedModel = model || config.model;
     const answer = await complete(requestMessages, AbortSignal.timeout(config.timeoutMs), selectedModel);
@@ -135,11 +125,8 @@ export async function POST(request: Request) {
   } catch (error) {
     console.error("[llm-bridge] Chat request failed", error);
     if (error instanceof Error && error.name === "TimeoutError") {
-      return Response.json({ error: "El modelo tardó demasiado en responder." }, { status: 504 });
+      return errorResponse("El modelo tardó demasiado en responder.", 504);
     }
-    return Response.json(
-      { error: "No fue posible obtener una respuesta del proveedor configurado." },
-      { status: 502 },
-    );
+    return errorResponse("No fue posible obtener una respuesta del proveedor configurado.", 502);
   }
 }
