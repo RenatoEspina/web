@@ -41,16 +41,30 @@ def main() -> None:
             print(f"- {mismatch}", file=sys.stderr)
         raise SystemExit(1)
 
-    # Smoke test deliberado: reproduce la ruta de fingerprint que fallaba con
-    # datasets 4.0.0 + Python 3.14 antes de cargar el modelo en GPU.
+    # Smoke test del Dataset para Python 3.14.
     from datasets import Dataset
 
     smoke = Dataset.from_list([{"text": "compatibility-check"}])
     if len(smoke) != 1:
         raise RuntimeError("datasets no pudo crear el Dataset mínimo de comprobación")
 
+    # Qwen3.5 necesita Transformers >=5.2.0. Comprobar el registro local evita
+    # iniciar una descarga/carga de modelo con una versión que no lo reconoce.
+    from transformers.models.auto.configuration_auto import CONFIG_MAPPING
+    from transformers.models.auto.modeling_auto import MODEL_FOR_CAUSAL_LM_MAPPING_NAMES
+
+    if "qwen3_5" not in CONFIG_MAPPING:
+        raise RuntimeError(
+            f"Transformers {version('transformers')} no registra la arquitectura qwen3_5"
+        )
+    if MODEL_FOR_CAUSAL_LM_MAPPING_NAMES.get("qwen3_5") != "Qwen3_5ForCausalLM":
+        raise RuntimeError("AutoModelForCausalLM no tiene soporte esperado para qwen3_5")
+
     print(f"Python: {sys.version.split()[0]}")
     print(f"datasets: {version('datasets')}")
+    print(f"transformers: {version('transformers')} (Qwen3.5 OK)")
+    print(f"trl: {version('trl')}")
+    print(f"peft: {version('peft')}")
     print("Dependencias del trainer: OK")
 
 
