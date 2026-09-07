@@ -18,6 +18,14 @@ export async function POST(request: Request) {
   const workspaceId = workspaceIdFrom(request);
   if (!workspaceId) return errorResponse("El espacio de documentos no es válido.", 400);
 
+  const documentConfig = getDocumentConfig();
+  if (listDocuments(workspaceId).length >= documentConfig.maxDocuments) {
+    return errorResponse(
+      `Este espacio ya contiene el máximo de ${documentConfig.maxDocuments} documentos.`,
+      409,
+    );
+  }
+
   let form: FormData;
   try {
     form = await request.formData();
@@ -31,9 +39,8 @@ export async function POST(request: Request) {
   const isPdf = value.type === "application/pdf" || value.name.toLocaleLowerCase().endsWith(".pdf");
   if (!isPdf) return errorResponse("Solo se admiten archivos PDF.", 415);
   if (value.size === 0) return errorResponse("El archivo PDF está vacío.", 400);
-  const maxPdfBytes = getDocumentConfig().maxPdfBytes;
-  if (value.size > maxPdfBytes) {
-    return errorResponse(`El PDF supera el límite de ${Math.round(maxPdfBytes / 1024 / 1024)} MB.`, 413);
+  if (value.size > documentConfig.maxPdfBytes) {
+    return errorResponse(`El PDF supera el límite de ${Math.round(documentConfig.maxPdfBytes / 1024 / 1024)} MB.`, 413);
   }
 
   try {
@@ -43,7 +50,11 @@ export async function POST(request: Request) {
   } catch (error) {
     const message = error instanceof Error ? error.message : "No fue posible procesar el PDF.";
     console.error("[llm-bridge] PDF indexing failed", error);
-    const status = /supera el límite|máximo de/i.test(message) ? 413 : 422;
+    const status = /máximo de .*documentos/i.test(message)
+      ? 409
+      : /supera el límite/i.test(message)
+        ? 413
+        : 422;
     return errorResponse(message, status);
   }
 }
