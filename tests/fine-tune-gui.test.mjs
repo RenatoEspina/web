@@ -8,6 +8,9 @@ const compose = await readFile(new URL("../docker-compose.yml", import.meta.url)
 const gui = await readFile(new URL("../trainer/gui/index.html", import.meta.url), "utf8");
 const commands = await readFile(new URL("../comandos.fish", import.meta.url), "utf8");
 const trainer = await readFile(new URL("../trainer/train.py", import.meta.url), "utf8");
+const requirements = await readFile(new URL("../trainer/requirements.txt", import.meta.url), "utf8");
+const dependencyCheck = await readFile(new URL("../trainer/check_dependencies.py", import.meta.url), "utf8");
+const trainingScript = await readFile(new URL("../scripts/train-adapter.sh", import.meta.url), "utf8");
 
 test("la GUI de fine-tuning queda restringida a loopback", () => {
   assert.match(server, /default="127\.0\.0\.1"/);
@@ -63,4 +66,18 @@ test("train.py publica el adaptador solo después de completar el staging", () =
   assert.match(trainer, /tempfile\.mkdtemp/);
   assert.match(trainer, /staging\.rename\(destination\)/);
   assert.match(trainer, /shutil\.rmtree\(staging, ignore_errors=True\)/);
+});
+
+test("el trainer usa una versión de datasets compatible con Python 3.14", () => {
+  assert.match(requirements, /^datasets==4\.8\.5$/m);
+  assert.match(dependencyCheck, /Dataset\.from_list\(\[\{"text": "compatibility-check"\}\]\)/);
+  assert.match(trainingScript, /trainer\/check_dependencies\.py/);
+  assert.match(trainingScript, /pip install -r trainer\/requirements\.txt/);
+});
+
+test("la GUI hace visible la compatibilidad y actualización del entorno", () => {
+  assert.match(gui, /Python 3\.14 compatible/);
+  assert.match(gui, /Preparar \/ actualizar entorno/);
+  assert.match(gui, /datasets 4\.8\.5/);
+  assert.match(gui, /sincroniza automáticamente un entorno desactualizado/);
 });

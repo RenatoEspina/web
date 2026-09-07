@@ -15,7 +15,7 @@
         <div class="eyebrow">QLoRA · SFT · panel de control</div>
         <h1 class="title">Fine-tuning local</h1>
         <p class="subtitle">Sube y valida el dataset, prepara CUDA, entrena el adaptador y cárgalo en vLLM sin copiar comandos manualmente. Este servidor escucha únicamente en loopback.</p>
-        <div class="badges"><span class="badge good">Solo esta máquina</span><span class="badge" id="envBadge">Entorno: comprobando…</span><span class="badge" id="vllmBadge">vLLM: comprobando…</span></div>
+        <div class="badges"><span class="badge good">Solo esta máquina</span><span class="badge">Python 3.14 compatible</span><span class="badge" id="envBadge">Entorno: comprobando…</span><span class="badge" id="vllmBadge">vLLM: comprobando…</span></div>
       </div>
       <button class="btn secondary" id="shutdownBtn">Cerrar panel</button>
     </header>
@@ -23,9 +23,10 @@
     <section class="grid">
       <article class="card">
         <h2>1. Entorno</h2>
-        <p class="help">La GUI puede crear <code>trainer/.venv</code>, instalar dependencias y comprobar CUDA/NF4.</p>
+        <p class="help">La GUI puede crear o actualizar <code>trainer/.venv</code>, instalar las versiones fijadas y comprobar CUDA/NF4.</p>
         <div class="statusline" id="envStatus">Consultando estado local…</div>
-        <div class="actions"><button class="btn" id="setupBtn">Preparar entorno</button><button class="btn secondary" id="checkBtn">Comprobar GPU</button></div>
+        <div class="summary">El entrenamiento verifica las dependencias antes de cargar el modelo y sincroniza automáticamente un entorno desactualizado. <code>datasets 4.8.5</code> evita el fallo de fingerprint observado con Python 3.14.</div>
+        <div class="actions"><button class="btn" id="setupBtn">Preparar / actualizar entorno</button><button class="btn secondary" id="checkBtn">Comprobar GPU</button></div>
       </article>
 
       <article class="card">
@@ -38,7 +39,7 @@
 
       <article class="card wide">
         <h2>3. Entrenamiento</h2>
-        <p class="help">Un solo botón valida el entorno, detiene vLLM si ocupa la GPU, ejecuta SFT + QLoRA y vuelve a iniciarlo si estaba activo.</p>
+        <p class="help">Un solo botón valida y sincroniza el entorno, detiene vLLM si ocupa la GPU, ejecuta SFT + QLoRA y vuelve a iniciarlo si estaba activo.</p>
         <form id="trainForm">
           <div class="row">
             <div class="field"><label for="adapterName">Nombre del adaptador</label><input class="input" id="adapterName" value="qwen-es-v1" pattern="[A-Za-z0-9][A-Za-z0-9._-]{0,63}" required /></div>
