@@ -96,7 +96,8 @@ export function removeDocument(workspaceId: string, documentId: string): boolean
 
 export function getDocuments(workspaceId: string, ids?: string[]): IndexedDocument[] {
   const workspace = workspaceFor(workspaceId);
-  if (!ids || ids.length === 0) return [...workspace.values()];
+  if (ids === undefined) return [...workspace.values()];
+  if (ids.length === 0) return [];
 
   const documents: IndexedDocument[] = [];
   for (const id of ids) {
