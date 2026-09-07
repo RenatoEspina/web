@@ -119,9 +119,14 @@ async function rankChunks(query: string, chunks: DocumentChunk[]): Promise<Ranke
   const config = getDocumentConfig();
   const lexicalScores = scoreLexically(query, chunks);
   const semanticScores: Array<number | undefined> = chunks.map(() => undefined);
+  const weightTotal = config.semanticWeight + config.lexicalWeight;
+  const semanticWeight = weightTotal > 0 ? config.semanticWeight / weightTotal : 0.7;
+  const lexicalWeight = weightTotal > 0 ? config.lexicalWeight / weightTotal : 0.3;
+  const semanticEnabled = semanticWeight > 0;
+  const lexicalEnabled = lexicalWeight > 0;
 
   const hasStoredEmbeddings = chunks.some((chunk) => Array.isArray(chunk.embedding) && chunk.embedding.length > 0);
-  if (hasStoredEmbeddings) {
+  if (hasStoredEmbeddings && semanticEnabled) {
     try {
       const queryEmbedding = await embedText(query, "query");
       if (queryEmbedding) {
@@ -136,17 +141,14 @@ async function rankChunks(query: string, chunks: DocumentChunk[]): Promise<Ranke
     }
   }
 
-  const weightTotal = config.semanticWeight + config.lexicalWeight;
-  const semanticWeight = weightTotal > 0 ? config.semanticWeight / weightTotal : 0.7;
-  const lexicalWeight = weightTotal > 0 ? config.lexicalWeight / weightTotal : 0.3;
   const candidateLimit = Math.min(chunks.length, Math.max(config.topK * 4, config.topK));
-  const semanticRanks = rankPositions(
-    semanticScores,
-    (score) => score >= config.minSemanticScore,
-    candidateLimit,
-  );
-  const lexicalRanks = rankPositions(lexicalScores, (score) => score > 0, candidateLimit);
-  const embeddingUsed = semanticRanks.some((rank) => rank !== undefined);
+  const semanticRanks = semanticEnabled
+    ? rankPositions(semanticScores, (score) => score >= config.minSemanticScore, candidateLimit)
+    : semanticScores.map(() => undefined);
+  const lexicalRanks = lexicalEnabled
+    ? rankPositions(lexicalScores, (score) => score > 0, candidateLimit)
+    : lexicalScores.map(() => undefined);
+  const embeddingUsed = semanticEnabled && semanticRanks.some((rank) => rank !== undefined);
 
   const ranked = chunks
     .map((chunk, index) => {
@@ -161,8 +163,8 @@ async function rankChunks(query: string, chunks: DocumentChunk[]): Promise<Ranke
         chunk,
         // RRF fusiona rankings heterogéneos sin asumir que cosine y TF-IDF
         // comparten escala o significado. Si ningún embedding supera el umbral,
-        // el ranking vuelve a ser exclusivamente léxico.
-        score: embeddingUsed ? fusedScore : lexicalScores[index],
+        // el ranking vuelve a ser exclusivamente léxico cuando esa señal está habilitada.
+        score: embeddingUsed ? fusedScore : (lexicalEnabled ? lexicalScores[index] : 0),
         lexicalScore: lexicalScores[index],
         ...(semanticScores[index] === undefined ? {} : { semanticScore: semanticScores[index] }),
       };
@@ -173,7 +175,7 @@ async function rankChunks(query: string, chunks: DocumentChunk[]): Promise<Ranke
       (embeddingUsed
         ? (right.semanticScore ?? -Infinity) - (left.semanticScore ?? -Infinity)
         : 0) ||
-      right.lexicalScore - left.lexicalScore ||
+      (lexicalEnabled ? right.lexicalScore - left.lexicalScore : 0) ||
       left.chunk.index - right.chunk.index
     ));
 
@@ -231,16 +233,30 @@ async function buildRag(documents: IndexedDocument[], query: string): Promise<Kn
   let contextWasCut = false;
 
   for (const result of ranked) {
-    if (remaining <= 0) break;
+    if (remaining <= 0) {
+      contextWasCut = true;
+      break;
+    }
+
     const fullBlock = contextBlock(result.chunk);
+    if (fullBlock.length > remaining && blocks.length > 0) {
+      contextWasCut = true;
+      break;
+    }
+
     const block = fullBlock.slice(0, remaining);
-    if (!block) break;
+    if (!block) {
+      contextWasCut = true;
+      break;
+    }
 
     blocks.push(block);
     sources.push(sourceFor(result.chunk, result));
     if (block.length < fullBlock.length) contextWasCut = true;
     remaining -= block.length + 2;
   }
+
+  if (sources.length < ranked.length) contextWasCut = true;
 
   return {
     mode: "rag",
@@ -278,9 +294,18 @@ function buildCag(workspaceId: string, documents: IndexedDocument[]): KnowledgeC
 
   for (const chunk of allChunks) {
     if (remaining <= 0) break;
+
     const fullBlock = contextBlock(chunk);
+    if (fullBlock.length > remaining && blocks.length > 0) {
+      truncated = true;
+      break;
+    }
+
     const block = fullBlock.slice(0, remaining);
-    if (!block) break;
+    if (!block) {
+      truncated = true;
+      break;
+    }
 
     blocks.push(block);
     sources.push(sourceFor(chunk));

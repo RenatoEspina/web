@@ -112,11 +112,13 @@ export async function POST(request: Request) {
     const requestMessages = knowledge ? withKnowledge(messages, knowledge) : messages;
     const selectedModel = model || config.model;
     const answer = await complete(requestMessages, AbortSignal.timeout(config.timeoutMs), selectedModel);
+    const effectiveMode: KnowledgeMode = knowledge?.mode ?? "none";
+
     return Response.json({
       message: answer,
       provider: config.provider,
       model: selectedModel,
-      mode,
+      mode: effectiveMode,
       sources: knowledge?.sources ?? [],
       cacheHit: knowledge?.cacheHit ?? false,
       embeddingUsed: knowledge?.embeddingUsed ?? false,
