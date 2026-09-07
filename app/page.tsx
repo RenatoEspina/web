@@ -108,6 +108,10 @@ function parseSources(value: unknown): KnowledgeSource[] {
     }));
 }
 
+function parseKnowledgeMode(value: unknown): KnowledgeMode {
+  return value === "rag" || value === "cag" ? value : "none";
+}
+
 async function responseData(response: Response): Promise<Record<string, unknown>> {
   try {
     const value: unknown = await response.json();
@@ -225,7 +229,16 @@ export default function Home() {
           return;
         }
 
-        setStatus(await getConnectionStatus(storedToken));
+        const nextStatus = await getConnectionStatus(storedToken);
+        setStatus(nextStatus);
+        if (nextStatus === "locked") {
+          window.sessionStorage.removeItem(TOKEN_STORAGE_KEY);
+          setAuthToken("");
+          setTokenDraft("");
+          setShowTokenDialog(true);
+          setTokenError("La clave guardada ya no es válida.");
+          return;
+        }
         await loadDocuments(storedToken, currentWorkspaceId);
       } catch {
         if (active) setStatus("offline");
@@ -281,11 +294,15 @@ export default function Home() {
       }
 
       if (!response.ok) {
+        setMessages(previousMessages);
+        setInput(message);
         setError(typeof data.error === "string" ? data.error : "No fue posible obtener una respuesta.");
         return;
       }
 
       if (typeof data.message !== "string") {
+        setMessages(previousMessages);
+        setInput(message);
         setError("El proveedor respondió sin texto.");
         return;
       }
@@ -296,7 +313,7 @@ export default function Home() {
         {
           role: "assistant",
           content: data.message,
-          mode: knowledgeMode,
+          mode: parseKnowledgeMode(data.mode),
           cacheHit: data.cacheHit === true,
           embeddingUsed: data.embeddingUsed === true,
           contextTruncated: data.contextTruncated === true,
@@ -305,6 +322,8 @@ export default function Home() {
       ]);
       setStatus("online");
     } catch {
+      setMessages(previousMessages);
+      setInput(message);
       setStatus("offline");
       setError("No se pudo contactar al gateway. Revisa que la aplicación siga ejecutándose.");
     } finally {
@@ -494,7 +513,7 @@ export default function Home() {
           <div className="knowledge-topline">
             <div className="knowledge-title">
               <span className="meta-key">DOCUMENTOS</span>
-              <span className="knowledge-count">{documents.length}/10</span>
+              <span className="knowledge-count">{documents.length}</span>
             </div>
             <div className="knowledge-actions">
               <Select value={knowledgeMode} onValueChange={(value) => setKnowledgeMode(value as KnowledgeMode)}>
@@ -565,7 +584,7 @@ export default function Home() {
           )}
           <p className="knowledge-hint">
             {knowledgeMode === "cag"
-              ? "CAG mantiene en caché el contexto completo; en documentos grandes usa embeddings para elegir una ventana relevante."
+              ? "CAG reutiliza el contexto documental en orden y lo trunca si supera el límite configurado."
               : knowledgeMode === "rag"
                 ? "RAG combina embeddings semánticos y coincidencia léxica para recuperar los fragmentos más relacionados."
                 : "El chat responderá sin consultar los PDF."}
