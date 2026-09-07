@@ -101,7 +101,7 @@ PDF
  ↓
 extracción de texto
  ↓
-normalización
+normalización estructural
  ↓
 chunks que pueden cruzar páginas
  ↓
@@ -110,16 +110,20 @@ embeddings por lote
 índice temporal en memoria
 ```
 
+La normalización conserva saltos de línea y párrafos útiles para listas/tablas simples. Solo recompone palabras partidas por salto de línea en casos acotados, evitando borrar rangos o guiones con significado.
+
 Durante una pregunta RAG se calculan dos rankings:
 
 - señal léxica tipo TF-IDF;
 - similitud coseno sobre embeddings.
 
-Los candidatos positivos de ambos recuperadores se acotan antes de combinarse mediante **Reciprocal Rank Fusion (RRF)**. Esto evita mezclar directamente escalas incompatibles y evita que toda la cola semántica participe solo por disponer de un vector.
+Los candidatos léxicos positivos y los candidatos semánticos que superan `RAG_MIN_SEMANTIC_SCORE` se acotan antes de combinarse mediante **Reciprocal Rank Fusion (RRF)**. Esto evita mezclar directamente escalas incompatibles y reduce la posibilidad de que similitudes semánticas débiles entren al `topK` únicamente por tener una posición relativa.
 
-Después de la fusión se toman los `topK` configurados y se construye el contexto respetando el presupuesto máximo. La API devuelve únicamente fuentes cuyos chunks realmente entraron al contexto enviado al LLM.
+Después de la fusión se toman los `topK` configurados y se construye el contexto respetando el presupuesto máximo. La API devuelve únicamente fuentes cuyos chunks realmente entraron al contexto enviado al LLM. Si ningún candidato semántico supera el umbral, el ranking vuelve a ser exclusivamente léxico y `embeddingUsed` se reporta como `false`.
 
 Si el servicio de embeddings falla al subir un PDF, el documento no se rechaza: queda indexado para recuperación léxica y el fallo semántico se registra en logs.
+
+El contenido documental se trata como datos. Si un PDF contiene literalmente las etiquetas `<documentos>` o `</documentos>`, el gateway las neutraliza antes de insertar el texto en el `system` prompt para impedir que el documento cierre los delimitadores usados por la aplicación.
 
 ### Selección de documentos
 
@@ -129,7 +133,7 @@ La selección es explícita:
 - `documentIds: []`: no usa ningún documento;
 - `documentIds: [id...]`: usa solo los seleccionados.
 
-Esto evita que desmarcar todos los PDF active accidentalmente toda la biblioteca.
+Las consultas a workspaces inexistentes no crean espacios vacíos. Solo una escritura documental crea un workspace, evitando que lecturas arbitrarias consuman el límite LRU o expulsen bibliotecas activas.
 
 ## CAG
 
@@ -162,9 +166,12 @@ RAG_CHUNK_OVERLAP=180
 RAG_TOP_K=4
 RAG_SEMANTIC_WEIGHT=70
 RAG_LEXICAL_WEIGHT=30
+RAG_MIN_SEMANTIC_SCORE=0.2
 RAG_MAX_CONTEXT_CHARACTERS=7000
 CAG_MAX_CONTEXT_CHARACTERS=8000
 ```
+
+`RAG_MIN_SEMANTIC_SCORE=0.2` corresponde al perfil actual con `qwen3-embedding:4b`. Si se cambia el modelo de embeddings, este umbral debe volver a validarse junto con el resto del índice.
 
 El índice es temporal y vive en memoria. Reiniciar el gateway elimina documentos, chunks, embeddings y caché CAG.
 
