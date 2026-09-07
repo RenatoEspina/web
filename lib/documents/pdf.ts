@@ -58,10 +58,10 @@ export async function indexPdf(data: Uint8Array, originalName: string, sizeBytes
         embeddingModel = embeddingConfig.model;
         embeddingDimension = embeddings[0]?.length;
       } catch (error) {
-        const detail = error instanceof Error ? ` ${error.message}` : "";
-        throw new Error(
-          `No fue posible generar embeddings para el PDF.${detail} ` +
-          "Verifica que el proveedor y el modelo de embeddings estén disponibles.",
+        const detail = error instanceof Error ? error.message : String(error);
+        console.warn(
+          `[llm-bridge] No fue posible generar embeddings para ${documentName}; ` +
+          `el documento seguirá disponible mediante recuperación léxica. ${detail}`,
         );
       }
     }
