@@ -35,6 +35,7 @@ DATASET_DIR = TRAINER_DIR / "datasets"
 EXAMPLE_DIR = TRAINER_DIR / "examples"
 ADAPTER_DIR = ROOT / "adapters"
 RUNTIME_DIR = ROOT / ".runtime"
+ENVIRONMENT_CHECK = TRAINER_DIR / "check_environment.py"
 MAX_BODY_BYTES = 40 * 1024 * 1024
 MAX_LOG_LINES = 2500
 SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
@@ -42,7 +43,6 @@ SAFE_DATASET = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,126}\.jsonl$")
 SAFE_MODEL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,255}$")
 EVALUATION_DATASETS = {"evaluation.jsonl"}
 DEFAULT_VLLM_IMAGE = "vllm/vllm-openai:v0.24.0"
-CUDA_CHECK = 'import torch; assert torch.cuda.is_available(), "CUDA no está disponible"; import bitsandbytes; from bitsandbytes.functional import quantize_4bit; x=torch.ones((2,2), device="cuda"); quantize_4bit(x, quant_type="nf4"); print(f"PyTorch: {torch.__version__}"); print(f"CUDA de PyTorch: {torch.version.cuda}"); print(f"GPU: {torch.cuda.get_device_name(0)}"); print(f"bitsandbytes: {bitsandbytes.__version__}"); print("bitsandbytes NF4: OK")'
 
 
 @dataclass
@@ -293,6 +293,10 @@ def run_command(job: Job, command: list[str], *, env: dict[str, str] | None = No
         raise RuntimeError(f"El proceso terminó con código {returncode}.")
 
 
+def check_training_environment(job: Job, label: str) -> None:
+    run_command(job, [str(trainer_python()), str(ENVIRONMENT_CHECK)], label=label)
+
+
 def wait_for_vllm(job: Job, timeout: int) -> None:
     append_log(job, "Esperando a que vLLM quede saludable…")
     started = time.monotonic()
@@ -377,13 +381,13 @@ def run_action(job: Job, payload: dict[str, Any]) -> None:
     action = job.action
     if action == "setup":
         setup_environment(job)
-        run_command(job, [str(trainer_python()), "-c", CUDA_CHECK], label="Comprobando CUDA y bitsandbytes")
+        check_training_environment(job, "Comprobando CUDA y bitsandbytes")
         job.result = {"environmentReady": True}
         return
     if action == "check":
         if not trainer_python().is_file():
             raise RuntimeError("Primero prepara el entorno de fine-tuning.")
-        run_command(job, [str(trainer_python()), "-c", CUDA_CHECK], label="Comprobando CUDA y bitsandbytes")
+        check_training_environment(job, "Comprobando CUDA y bitsandbytes")
         job.result = {"check": "ok"}
         return
     if action == "train":
@@ -405,7 +409,7 @@ def run_action(job: Job, payload: dict[str, Any]) -> None:
         seed = int_arg(payload, "seed", 42, 0, 2_147_483_647)
         if not trainer_python().is_file():
             setup_environment(job, automatic=True)
-        run_command(job, [str(trainer_python()), "-c", CUDA_CHECK], label="Verificando entorno")
+        check_training_environment(job, "Verificando entorno")
         command = ["bash", str(ROOT / "scripts" / "train-adapter.sh"), str(dataset), name, "--model", model, "--rank", str(rank), "--alpha", str(alpha), "--dropout", str(dropout), "--epochs", str(epochs), "--learning-rate", str(learning_rate), "--batch-size", str(batch_size), "--gradient-accumulation", str(gradient_accumulation), "--max-length", str(max_length), "--seed", str(seed)]
         run_command(job, command, label=f"Entrenando {name}")
         job.result = {"adapter": name, "dataset": dataset.name, "examples": summary["examples"]}
