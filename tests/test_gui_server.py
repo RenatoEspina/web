@@ -52,6 +52,45 @@ class AdapterDirectoryTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, r"owner=.*mode=755.*sudo chown -R"):
                     gui_server.ensure_adapter_dir_writable(job)
 
+    def test_delete_adapter_removes_persistent_files_and_export(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            adapter_dir = root / "adapters"
+            adapter = adapter_dir / "terraria-v1"
+            adapter.mkdir(parents=True)
+            (adapter / "manifest.json").write_text("{}", encoding="utf-8")
+            export = adapter_dir / ".vllm-exports" / "terraria-v1" / "fingerprint"
+            export.mkdir(parents=True)
+            (export / "export.json").write_text("{}", encoding="utf-8")
+            env_file = root / ".env.local"
+            env_file.write_text("LLM_ADAPTER_MODELS=otro,terraria-v1\n", encoding="utf-8")
+            job = gui_server.Job(id="test", action="delete-adapter")
+
+            with (
+                mock.patch.object(gui_server, "ROOT", root),
+                mock.patch.object(gui_server, "ADAPTER_DIR", adapter_dir),
+                mock.patch.object(gui_server, "fetch_vllm_models", return_value=(False, [])),
+            ):
+                gui_server.delete_adapter(job, "terraria-v1")
+
+            self.assertFalse(adapter.exists())
+            self.assertFalse((adapter_dir / ".vllm-exports" / "terraria-v1").exists())
+            self.assertEqual(env_file.read_text(encoding="utf-8"), "LLM_ADAPTER_MODELS=otro\n")
+
+    def test_delete_adapter_refuses_loaded_runtime(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            adapter_dir = Path(temporary) / "adapters"
+            adapter = adapter_dir / "terraria-v1"
+            adapter.mkdir(parents=True)
+            job = gui_server.Job(id="test", action="delete-adapter")
+            with (
+                mock.patch.object(gui_server, "ADAPTER_DIR", adapter_dir),
+                mock.patch.object(gui_server, "fetch_vllm_models", return_value=(True, ["terraria-v1"])),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "Descarga primero"):
+                    gui_server.delete_adapter(job, "terraria-v1")
+            self.assertTrue(adapter.exists())
+
 
 class AdapterAllowlistTests(unittest.TestCase):
     def test_adds_and_removes_adapter_from_gateway_allowlist(self):

@@ -32,7 +32,7 @@ export default function FineTunePage() {
           </pre>
           <p className="mt-3 text-sm leading-6 text-zinc-400">
             Desde esa interfaz puedes subir y validar datasets, preparar el entorno, entrenar adaptadores,
-            iniciar o detener vLLM y cargar o descargar LoRA dinámicamente.
+            iniciar o detener vLLM, cargar o descargar LoRA dinámicamente y borrar adaptadores que ya no necesites.
           </p>
         </div>
 

@@ -32,8 +32,8 @@ def arguments() -> argparse.Namespace:
     parser.add_argument("--rank", type=int, choices=(8, 16, 32), default=16)
     parser.add_argument("--alpha", type=int, default=32)
     parser.add_argument("--dropout", type=float, default=0.05)
-    parser.add_argument("--epochs", type=float, default=3.0)
-    parser.add_argument("--learning-rate", type=float, default=2e-4)
+    parser.add_argument("--epochs", type=float, default=2.0)
+    parser.add_argument("--learning-rate", type=float, default=1e-4)
     parser.add_argument("--batch-size", type=int, default=1)
     parser.add_argument("--gradient-accumulation", type=int, default=8)
     parser.add_argument("--max-length", type=int, default=1024)
@@ -61,19 +61,9 @@ def validate_model_architecture(model_name: str) -> str:
     return config.model_type
 
 
-def format_dataset(tokenizer, examples: list[dict]) -> Dataset:
-    """Formatea en Python puro para no depender del fingerprint de Dataset.map."""
-    formatted = [
-        {
-            "text": tokenizer.apply_chat_template(
-                example["messages"],
-                tokenize=False,
-                add_generation_prompt=False,
-            )
-        }
-        for example in examples
-    ]
-    return Dataset.from_list(formatted)
+def format_dataset(examples: list[dict]) -> Dataset:
+    """Conserva los roles para que TRL pueda enmascarar el prompt de la pérdida."""
+    return Dataset.from_list(examples)
 
 
 def main() -> None:
@@ -97,7 +87,7 @@ def main() -> None:
         tokenizer = AutoTokenizer.from_pretrained(args.model, trust_remote_code=False)
         if tokenizer.pad_token is None:
             tokenizer.pad_token = tokenizer.eos_token
-        dataset = format_dataset(tokenizer, examples)
+        dataset = format_dataset(examples)
 
         compute_dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
         quantization = BitsAndBytesConfig(
@@ -140,7 +130,10 @@ def main() -> None:
             fp16=compute_dtype == torch.float16,
             bf16=compute_dtype == torch.bfloat16,
             optim="paged_adamw_8bit",
-            dataset_text_field="text",
+            # El dataset conserva `messages`: solo se optimizan las respuestas
+            # del asistente, no el system prompt ni las preguntas del usuario.
+            assistant_only_loss=True,
+            eos_token=tokenizer.eos_token,
         )
         trainer = SFTTrainer(
             model=model,
@@ -166,6 +159,7 @@ def main() -> None:
                 "rank": args.rank,
                 "alpha": args.alpha,
                 "dropout": args.dropout,
+                "assistantOnlyLoss": True,
                 "epochs": args.epochs,
                 "learningRate": args.learning_rate,
                 "batchSize": args.batch_size,

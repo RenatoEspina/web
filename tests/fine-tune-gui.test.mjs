@@ -20,7 +20,7 @@ test("la GUI de fine-tuning queda restringida a loopback", () => {
 });
 
 test("la GUI solo admite acciones administrativas predefinidas", () => {
-  assert.match(server, /allowed = \{"setup", "check", "train", "start-vllm", "stop-vllm", "load-adapter", "unload-adapter", "verify-adapter"\}/);
+  assert.match(server, /allowed = \{"setup", "check", "train", "start-vllm", "stop-vllm", "load-adapter", "unload-adapter", "verify-adapter", "delete-adapter"\}/);
   assert.match(server, /Dataset fuera de las carpetas permitidas/);
   assert.match(server, /x-fine-tune-token/i);
 });
@@ -31,7 +31,21 @@ test("vLLM habilita LoRA dinámica únicamente detrás del puerto local", () => 
 });
 
 test("el learning rate por defecto es válido para el control HTML", () => {
-  assert.match(gui, /id="learningRate"[^>]+value="0\.0002"[^>]+step="any"/);
+  assert.match(gui, /id="learningRate"[^>]+value="0\.0001"[^>]+step="any"/);
+});
+
+test("la sección de entrenamiento explica sus parámetros", () => {
+  assert.match(gui, /class="field-help"[^>]+data-help="Identificador de la carpeta del adaptador/);
+  assert.match(gui, /class="field-help"[^>]+data-help="Tamaño de cada actualización/);
+  assert.match(gui, /class="field-help"[^>]+data-help="Acumula gradientes antes de actualizar/);
+});
+
+test("la GUI permite borrar adaptadores persistidos", () => {
+  assert.match(gui, /data-action="delete-adapter">Borrar/);
+  assert.match(gui, /delete-adapter.*window\.confirm/);
+  assert.match(server, /if action == "delete-adapter"/);
+  assert.match(server, /Descarga primero el adaptador/);
+  assert.match(server, /shutil\.rmtree\(directory\)/);
 });
 
 test("la GUI permite comprobar efecto LoRA además de registrarlo", () => {
@@ -48,7 +62,7 @@ test("evaluation.jsonl se identifica como evaluación y no se ofrece para SFT", 
 });
 
 test("entrenamiento y vLLM preparan adapters sin borrar su contenido", () => {
-  assert.equal((server.match(/ensure_adapter_dir_writable\(job\)/g) || []).length, 3);
+  assert.equal((server.match(/ensure_adapter_dir_writable\(job\)/g) || []).length, 4);
   assert.match(server, /docker,[\s\S]+"run",[\s\S]+"--rm",[\s\S]+"--user",[\s\S]+"0:0"/);
   assert.match(server, /DEFAULT_VLLM_IMAGE = "vllm\/vllm-openai:v0\.24\.0"/);
   assert.match(server, /"--entrypoint",\s+"\/bin\/sh"/);
@@ -108,6 +122,8 @@ test("CI resuelve las dependencias del trainer con la misma versión mayor de Py
 test("train.py valida la arquitectura antes de cargar el modelo y no usa Dataset.map con lambda", () => {
   assert.match(trainer, /validate_model_architecture\(args\.model\)/);
   assert.match(trainer, /AutoConfig\.from_pretrained/);
+  assert.match(trainer, /Dataset\.from_list\(examples\)/);
+  assert.match(trainer, /assistant_only_loss=True/);
   assert.match(trainer, /processing_class=tokenizer/);
   assert.match(trainer, /dtype=compute_dtype/);
   assert.doesNotMatch(trainer, /Dataset\.from_list\(examples\)\.map/);
