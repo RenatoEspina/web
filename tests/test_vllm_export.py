@@ -69,20 +69,59 @@ class NamespaceTests(unittest.TestCase):
 
 
 class VerificationTests(unittest.TestCase):
+    NORMAL_GENERATION = {
+        "text": "respuesta suficientemente larga",
+        "characters": 160,
+        "latencySeconds": 1.0,
+        "finishReason": "stop",
+        "promptTokens": 20,
+        "completionTokens": 80,
+        "tokensPerSecond": 80.0,
+    }
+
     def test_identical_probabilities_are_inconclusive(self):
-        with mock.patch.object(verify_lora, "probe", return_value={"text": "a", "top": {"a": -1.0}}):
-            self.assertEqual(verify_lora.verify("http://localhost", "base", "lora")["status"], "inconclusive")
+        with (mock.patch.object(verify_lora, "probe", return_value={"text": "a", "top": {"a": -1.0}}),
+              mock.patch.object(verify_lora, "generation_probe", return_value=self.NORMAL_GENERATION)):
+            report = verify_lora.verify("http://localhost", "base", "lora")
+        self.assertEqual(report["status"], "inconclusive")
+        self.assertFalse(report["diagnostics"]["earlyStopSuspected"])
 
     def test_same_text_can_show_a_real_probability_change(self):
         base = {"text": "a", "top": {"a": -1.0}}
         lora = {"text": "a", "top": {"a": -0.5}}
-        with mock.patch.object(verify_lora, "probe", side_effect=[base, base, lora] * 3):
-            self.assertEqual(verify_lora.verify("http://localhost", "base", "lora")["status"], "effect_detected")
+        with (mock.patch.object(verify_lora, "probe", side_effect=[base, base, lora] * 3),
+              mock.patch.object(verify_lora, "generation_probe", return_value=self.NORMAL_GENERATION)):
+            report = verify_lora.verify("http://localhost", "base", "lora")
+        self.assertEqual(report["status"], "effect_detected")
 
     def test_baseline_numerical_noise_does_not_count_as_lora_effect(self):
         samples = [{"top": {"a": score}} for score in (-1.0, -1.01, -1.02)]
-        with mock.patch.object(verify_lora, "probe", side_effect=samples * 3):
-            self.assertEqual(verify_lora.verify("http://localhost", "base", "lora")["status"], "inconclusive")
+        with (mock.patch.object(verify_lora, "probe", side_effect=samples * 3),
+              mock.patch.object(verify_lora, "generation_probe", return_value=self.NORMAL_GENERATION)):
+            report = verify_lora.verify("http://localhost", "base", "lora")
+        self.assertEqual(report["status"], "inconclusive")
+
+    def test_generation_diagnostic_flags_repeated_early_stop(self):
+        base_distribution = {"text": "a", "top": {"a": -1.0}}
+        lora_distribution = {"text": "a", "top": {"a": -0.5}}
+        base_generation = dict(self.NORMAL_GENERATION)
+        short_generation = {
+            "text": "corta",
+            "characters": 20,
+            "latencySeconds": 0.3,
+            "finishReason": "stop",
+            "promptTokens": 20,
+            "completionTokens": 12,
+            "tokensPerSecond": 40.0,
+        }
+        with (mock.patch.object(
+                verify_lora, "probe", side_effect=[base_distribution, base_distribution, lora_distribution] * 3),
+              mock.patch.object(
+                verify_lora, "generation_probe", side_effect=[base_generation, short_generation] * 3)):
+            report = verify_lora.verify("http://localhost", "base", "lora")
+        self.assertEqual(report["status"], "effect_detected")
+        self.assertEqual(report["diagnostics"]["markedlyShorterCases"], 3)
+        self.assertTrue(report["diagnostics"]["earlyStopSuspected"])
 
 
 @unittest.skipUnless(importlib.util.find_spec("safetensors") and importlib.util.find_spec("torch"),

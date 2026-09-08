@@ -1,7 +1,7 @@
 import { getAllowedModels, getLlmConfig } from "./config";
 import { OllamaProvider } from "./ollama";
 import { OpenAiCompatibleProvider } from "./openai-compatible";
-import type { ChatMessage, LlmProvider } from "./types";
+import type { ChatMessage, CompletionResult, LlmProvider } from "./types";
 
 export function getProvider(model?: string): LlmProvider {
   const config = getLlmConfig();
@@ -15,7 +15,7 @@ export function getProvider(model?: string): LlmProvider {
     : new OpenAiCompatibleProvider(selectedConfig);
 }
 
-export async function complete(messages: ChatMessage[], signal: AbortSignal, model?: string): Promise<string> {
+export async function complete(messages: ChatMessage[], signal: AbortSignal, model?: string): Promise<CompletionResult> {
   return getProvider(model).complete(messages, signal);
 }
 
@@ -33,4 +33,4 @@ export async function checkProvider(signal: AbortSignal) {
   };
 }
 
-export type { ChatMessage } from "./types";
+export type { ChatMessage, CompletionResult } from "./types";

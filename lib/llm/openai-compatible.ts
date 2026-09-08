@@ -1,18 +1,28 @@
 import { endpoint } from "./config";
-import type { ChatMessage, LlmConfig, LlmProvider, ProviderHealth } from "./types";
+import type { ChatMessage, CompletionResult, LlmConfig, LlmProvider, ProviderHealth } from "./types";
 
 type OpenAiResponse = {
   choices?: Array<{
+    finish_reason?: unknown;
     message?: {
       content?: unknown;
     };
   }>;
+  usage?: {
+    prompt_tokens?: unknown;
+    completion_tokens?: unknown;
+    total_tokens?: unknown;
+  };
 };
+
+function tokenCount(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
+}
 
 export class OpenAiCompatibleProvider implements LlmProvider {
   constructor(private readonly config: LlmConfig) {}
 
-  async complete(messages: ChatMessage[], signal: AbortSignal): Promise<string> {
+  async complete(messages: ChatMessage[], signal: AbortSignal): Promise<CompletionResult> {
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
     };
@@ -20,6 +30,7 @@ export class OpenAiCompatibleProvider implements LlmProvider {
       headers.Authorization = `Bearer ${this.config.apiKey}`;
     }
 
+    const started = performance.now();
     const response = await fetch(endpoint(this.config.baseUrl, "/v1/chat/completions"), {
       method: "POST",
       headers,
@@ -32,6 +43,7 @@ export class OpenAiCompatibleProvider implements LlmProvider {
       }),
       signal,
     });
+    const latencyMs = Math.max(0, Math.round(performance.now() - started));
 
     const raw = await response.text();
     if (!response.ok) {
@@ -46,12 +58,31 @@ export class OpenAiCompatibleProvider implements LlmProvider {
       throw new Error("Provider returned invalid JSON.");
     }
 
-    const content = data.choices?.[0]?.message?.content;
+    const choice = data.choices?.[0];
+    const content = choice?.message?.content;
     if (typeof content !== "string") {
       throw new Error("Provider response did not contain assistant text.");
     }
 
-    return content;
+    const promptTokens = tokenCount(data.usage?.prompt_tokens);
+    const completionTokens = tokenCount(data.usage?.completion_tokens);
+    const totalTokens = tokenCount(data.usage?.total_tokens);
+    const finishReason = typeof choice?.finish_reason === "string" ? choice.finish_reason : undefined;
+    const tokensPerSecond = completionTokens !== undefined && latencyMs > 0
+      ? Number((completionTokens / (latencyMs / 1000)).toFixed(2))
+      : undefined;
+
+    return {
+      content,
+      latencyMs,
+      finishReason,
+      usage: {
+        promptTokens,
+        completionTokens,
+        totalTokens,
+      },
+      tokensPerSecond,
+    };
   }
 
   async health(signal: AbortSignal): Promise<ProviderHealth> {

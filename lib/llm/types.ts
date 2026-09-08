@@ -22,7 +22,21 @@ export interface ProviderHealth {
   status?: number;
 }
 
+export interface CompletionUsage {
+  promptTokens?: number;
+  completionTokens?: number;
+  totalTokens?: number;
+}
+
+export interface CompletionResult {
+  content: string;
+  latencyMs: number;
+  finishReason?: string;
+  usage: CompletionUsage;
+  tokensPerSecond?: number;
+}
+
 export interface LlmProvider {
-  complete(messages: ChatMessage[], signal: AbortSignal): Promise<string>;
+  complete(messages: ChatMessage[], signal: AbortSignal): Promise<CompletionResult>;
   health(signal: AbortSignal): Promise<ProviderHealth>;
 }
