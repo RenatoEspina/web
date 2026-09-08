@@ -23,17 +23,17 @@ class TerrariaCorpusTests(unittest.TestCase):
         validation_rows = decode(validation)
         evaluation_rows = decode(evaluation)
 
-        self.assertEqual(len(train_rows), 128)
+        self.assertEqual(len(train_rows), 160)
         self.assertEqual(len(validation_rows), 24)
         self.assertEqual(len(evaluation_rows), 16)
-        self.assertEqual(len(corpus["sources"]), 42)
+        self.assertEqual(len(corpus["sources"]), 50)
         self.assertIn("in English", corpus["system"])
 
         counts = {
             split: len([source for source in corpus["sources"] if source["split"] == split])
             for split in ("train", "validation", "evaluation")
         }
-        self.assertEqual(counts, {"train": 32, "validation": 6, "evaluation": 4})
+        self.assertEqual(counts, {"train": 40, "validation": 6, "evaluation": 4})
 
         for row in train_rows + validation_rows:
             self.assertEqual(row["messages"][-1]["role"], "assistant")
@@ -64,9 +64,9 @@ class TerrariaCorpusTests(unittest.TestCase):
             training_examples, training_summary = load_jsonl(training_path)
             validation_examples, validation_summary = load_jsonl(validation_path)
 
-        self.assertEqual(training_summary["examples"], 128)
+        self.assertEqual(training_summary["examples"], 160)
         self.assertEqual(validation_summary["examples"], 24)
-        self.assertEqual(len(training_examples), 128)
+        self.assertEqual(len(training_examples), 160)
         self.assertEqual(len(validation_examples), 24)
 
     def test_sources_and_questions_are_disjoint_between_all_splits(self):
@@ -97,7 +97,7 @@ class TerrariaCorpusTests(unittest.TestCase):
         data = DIRECTORY / "data"
         self.assertTrue((data / "metadata.json").is_file())
         shards = sorted(data.glob("sources-*.json"))
-        self.assertGreaterEqual(len(shards), 4)
+        self.assertGreaterEqual(len(shards), 5)
         self.assertFalse((DIRECTORY / "curated.json").exists())
 
 
