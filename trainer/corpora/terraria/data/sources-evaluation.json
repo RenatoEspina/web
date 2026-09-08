@@ -1,0 +1,50 @@
+[
+  {
+    "id": "eval-eye",
+    "title": "Suspicious Looking Eye",
+    "url": "https://terraria.wiki.gg/wiki/Suspicious_Looking_Eye",
+    "split": "evaluation",
+    "qa": [
+      ["Which boss appears when a Suspicious Looking Eye is used? Keep the boss name in English.", "Eye of Cthulhu.", ["Eye of Cthulhu"]],
+      ["Can a Suspicious Looking Eye be used during the day?", "No. It can only be used at night.", ["night"]],
+      ["How many Lens are needed to craft a Suspicious Looking Eye? Use a number.", "6 Lens.", ["6"]],
+      ["Which crafting station is needed for a Suspicious Looking Eye? Keep the station names in English.", "Demon Altar or Crimson Altar.", ["Altar"]]
+    ]
+  },
+  {
+    "id": "eval-queen-bee",
+    "title": "Queen Bee",
+    "url": "https://terraria.wiki.gg/wiki/Queen_Bee",
+    "split": "evaluation",
+    "qa": [
+      ["What happens when a Larva is broken inside a Bee Hive in the Underground Jungle?", "Queen Bee is summoned.", ["Queen Bee"]],
+      ["Which item can manually summon Queen Bee?", "Abeemination.", ["Abeemination"]],
+      ["In which biomes can Abeemination be used? Keep the biome names in English.", "Jungle or Underground Jungle.", ["Jungle"]],
+      ["Do I have to wait until night to use Abeemination in the Jungle?", "No. It can be used at any time.", ["No"]]
+    ]
+  },
+  {
+    "id": "eval-duke-fishron",
+    "title": "Duke Fishron",
+    "url": "https://terraria.wiki.gg/wiki/Duke_Fishron",
+    "split": "evaluation",
+    "qa": [
+      ["Which bait summons Duke Fishron when fishing in the Ocean? Keep the item name in English.", "Truffle Worm.", ["Truffle Worm"]],
+      ["Does summoning Duke Fishron require defeating another boss first in that world?", "No. His summon does not require any previous boss kill in that world.", ["No"]],
+      ["Is Duke Fishron mandatory for normal progression?", "No. Duke Fishron is an optional boss.", ["optional"]],
+      ["Which difficulties include Duke Fishron's third phase?", "Expert Mode and Master Mode.", ["Expert", "Master"]]
+    ]
+  },
+  {
+    "id": "eval-aether",
+    "title": "The Aether",
+    "url": "https://terraria.wiki.gg/wiki/The_Aether",
+    "split": "evaluation",
+    "qa": [
+      ["On which side of the world should I search for the natural Aether relative to the Jungle?", "On the same side as the Jungle, underground toward the outer fifth of the world.", ["same side"]],
+      ["Which liquid fills the central pool of the Aether? Use its English name.", "Shimmer.", ["Shimmer"]],
+      ["Does a world generated before 1.4.4 automatically gain a natural Aether after updating?", "No. Worlds generated before 1.4.4 do not automatically gain that minibiome.", ["No"]],
+      ["How many tiles of Shimmer are required for an artificial Aether? Use a number.", "At least 300 tiles of Shimmer in the Underground or Cavern layers.", ["300"]]
+    ]
+  }
+]
