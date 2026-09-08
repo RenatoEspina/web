@@ -56,6 +56,11 @@ def distribution_probe(base_url: str, model: str, prompt: str) -> dict:
     }
 
 
+def probe(base_url: str, model: str, prompt: str) -> dict:
+    """Compatibilidad con consumidores anteriores del diagnóstico de primer token."""
+    return distribution_probe(base_url, model, prompt)
+
+
 def generation_probe(base_url: str, model: str, prompt: str) -> dict:
     result, latency = chat_request(base_url, model, prompt, max_tokens=GENERATION_MAX_TOKENS)
     choice = result["choices"][0]
@@ -97,9 +102,9 @@ def verify(base_url: str, base_model: str, adapter: str) -> dict:
 
     distribution_cases = []
     for prompt in DISTRIBUTION_PROMPTS:
-        baseline = distribution_probe(base_url, base_model, prompt)
-        repeated = distribution_probe(base_url, base_model, prompt)
-        adapted = distribution_probe(base_url, adapter, prompt)
+        baseline = probe(base_url, base_model, prompt)
+        repeated = probe(base_url, base_model, prompt)
+        adapted = probe(base_url, adapter, prompt)
         noise = difference(baseline, repeated)
         delta = difference(baseline, adapted)
         distribution_cases.append({
