@@ -38,6 +38,16 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import type { DocumentSummary, KnowledgeMode, KnowledgeSource } from "@/lib/documents";
 
+type InferenceMetrics = {
+  model?: string;
+  latencyMs?: number;
+  finishReason?: string;
+  promptTokens?: number;
+  completionTokens?: number;
+  totalTokens?: number;
+  tokensPerSecond?: number;
+};
+
 type UiMessage = {
   role: "user" | "assistant";
   content: string;
@@ -46,6 +56,7 @@ type UiMessage = {
   cacheHit?: boolean;
   embeddingUsed?: boolean;
   contextTruncated?: boolean;
+  inference?: InferenceMetrics;
 };
 
 type GatewayConfig = {
@@ -110,6 +121,24 @@ function parseSources(value: unknown): KnowledgeSource[] {
 
 function parseKnowledgeMode(value: unknown): KnowledgeMode {
   return value === "rag" || value === "cag" ? value : "none";
+}
+
+function metricNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
+}
+
+function parseInference(value: unknown, model: unknown): InferenceMetrics | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const record = value as Record<string, unknown>;
+  return {
+    ...(typeof model === "string" && model ? { model } : {}),
+    ...(metricNumber(record.latencyMs) !== undefined ? { latencyMs: metricNumber(record.latencyMs) } : {}),
+    ...(typeof record.finishReason === "string" ? { finishReason: record.finishReason } : {}),
+    ...(metricNumber(record.promptTokens) !== undefined ? { promptTokens: metricNumber(record.promptTokens) } : {}),
+    ...(metricNumber(record.completionTokens) !== undefined ? { completionTokens: metricNumber(record.completionTokens) } : {}),
+    ...(metricNumber(record.totalTokens) !== undefined ? { totalTokens: metricNumber(record.totalTokens) } : {}),
+    ...(metricNumber(record.tokensPerSecond) !== undefined ? { tokensPerSecond: metricNumber(record.tokensPerSecond) } : {}),
+  };
 }
 
 async function responseData(response: Response): Promise<Record<string, unknown>> {
@@ -318,6 +347,7 @@ export default function Home() {
           embeddingUsed: data.embeddingUsed === true,
           contextTruncated: data.contextTruncated === true,
           sources: parseSources(data.sources),
+          inference: parseInference(data.inference, data.model),
         },
       ]);
       setStatus("online");
@@ -455,6 +485,14 @@ export default function Home() {
     composerRef.current?.focus();
   }
 
+  function handleModelChange(nextModel: string) {
+    if (loading || nextModel === selectedModel) return;
+    setSelectedModel(nextModel);
+    setMessages([]);
+    setError("");
+    composerRef.current?.focus();
+  }
+
   const providerLabel = config?.provider === "ollama" ? "Ollama" : "vLLM";
   const statusLabel: Record<ConnectionStatus, string> = {
     checking: "Comprobando",
@@ -504,7 +542,7 @@ export default function Home() {
           <span className="meta-separator">/</span>
           <span className="model-name" title={selectedModel || config?.model}>{selectedModel || config?.model || "cargando configuración"}</span>
           <span className="meta-spacer" />
-          {config && config.models.length > 1 && <Select value={selectedModel} onValueChange={setSelectedModel}><SelectTrigger className="knowledge-select" aria-label="Modelo o adaptador"><SelectValue /></SelectTrigger><SelectContent>{config.models.map((model) => <SelectItem value={model} key={model}>{model}</SelectItem>)}</SelectContent></Select>}
+          {config && config.models.length > 1 && <Select value={selectedModel} onValueChange={handleModelChange} disabled={loading}><SelectTrigger className="knowledge-select" aria-label="Modelo o adaptador"><SelectValue /></SelectTrigger><SelectContent>{config.models.map((model) => <SelectItem value={model} key={model}>{model}</SelectItem>)}</SelectContent></Select>}
           <Link href="/fine-tune" className="token-link"><FlaskConical size={13} /> Fine-tuning</Link>
           <span className="secure-label"><ShieldCheck size={14} /> PDF en memoria · embeddings {config?.embedding.enabled ? "activos" : "desactivados"}</span>
         </div>
@@ -618,6 +656,15 @@ export default function Home() {
                         : "TÚ"}
                     </div>
                     <p className="message-content">{message.content}</p>
+                    {message.inference && (
+                      <div className="message-sources" aria-label="Métricas de inferencia">
+                        {message.inference.model && <span className="source-pill">modelo · {message.inference.model}</span>}
+                        {message.inference.latencyMs !== undefined && <span className="source-pill">latencia · {(message.inference.latencyMs / 1000).toFixed(2)} s</span>}
+                        {message.inference.completionTokens !== undefined && <span className="source-pill">salida · {message.inference.completionTokens} tok</span>}
+                        {message.inference.tokensPerSecond !== undefined && <span className="source-pill">{message.inference.tokensPerSecond.toFixed(2)} tok/s</span>}
+                        {message.inference.finishReason && <span className="source-pill">fin · {message.inference.finishReason}</span>}
+                      </div>
+                    )}
                     {message.sources && message.sources.length > 0 && (
                       <div className="message-sources" aria-label="Fuentes consultadas">
                         {[...new Map(message.sources.map((source) => [`${source.documentId}-${source.chunkId}`, source])).values()]
