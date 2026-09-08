@@ -92,7 +92,7 @@ def materialize() -> dict[str, int]:
     training, validation, evaluation = render(corpus)
     outputs = {
         TRAINER / "examples" / "terraria-training.jsonl": training,
-        TRAINER / "examples" / "terraria-validation.jsonl": validation,
+        DIRECTORY / "validation.jsonl": validation,
         DIRECTORY / "evaluation.jsonl": evaluation,
     }
     for path, content in outputs.items():
