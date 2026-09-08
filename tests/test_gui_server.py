@@ -77,19 +77,32 @@ class AdapterDirectoryTests(unittest.TestCase):
             self.assertFalse((adapter_dir / ".vllm-exports" / "terraria-v1").exists())
             self.assertEqual(env_file.read_text(encoding="utf-8"), "LLM_ADAPTER_MODELS=otro\n")
 
-    def test_delete_adapter_refuses_loaded_runtime(self):
+    def test_delete_adapter_unloads_loaded_runtime_automatically(self):
         with tempfile.TemporaryDirectory() as temporary:
-            adapter_dir = Path(temporary) / "adapters"
+            root = Path(temporary)
+            adapter_dir = root / "adapters"
             adapter = adapter_dir / "terraria-v1"
             adapter.mkdir(parents=True)
+            (adapter / "manifest.json").write_text("{}", encoding="utf-8")
+            env_file = root / ".env.local"
+            env_file.write_text("LLM_ADAPTER_MODELS=terraria-v1\n", encoding="utf-8")
             job = gui_server.Job(id="test", action="delete-adapter")
+
             with (
+                mock.patch.object(gui_server, "ROOT", root),
                 mock.patch.object(gui_server, "ADAPTER_DIR", adapter_dir),
                 mock.patch.object(gui_server, "fetch_vllm_models", return_value=(True, ["terraria-v1"])),
+                mock.patch.object(gui_server, "loaded_adapter_path", return_value="/adapters/terraria-v1"),
+                mock.patch.object(gui_server, "post_vllm", return_value="ok") as post_vllm,
             ):
-                with self.assertRaisesRegex(RuntimeError, "Descarga primero"):
-                    gui_server.delete_adapter(job, "terraria-v1")
-            self.assertTrue(adapter.exists())
+                gui_server.delete_adapter(job, "terraria-v1")
+
+            post_vllm.assert_called_once_with(
+                "/v1/unload_lora_adapter",
+                {"lora_name": "terraria-v1"},
+            )
+            self.assertFalse(adapter.exists())
+            self.assertEqual(env_file.read_text(encoding="utf-8"), "LLM_ADAPTER_MODELS=\n")
 
 
 class AdapterAllowlistTests(unittest.TestCase):
@@ -170,6 +183,26 @@ class AdapterAllowlistTests(unittest.TestCase):
             ):
                 with self.assertRaisesRegex(RuntimeError, "puede ser inconsistente"):
                     gui_server.set_adapter_allowed_in_env("nuevo", True, rollback_runtime=True)
+
+
+class VllmStartTests(unittest.TestCase):
+    def test_gui_starts_vllm_through_comandos_with_embeddings(self):
+        job = gui_server.Job(id="test", action="start-vllm")
+        model = "Qwen/Qwen3.5-0.8B"
+        with (
+            mock.patch.object(gui_server, "ensure_adapter_dir_writable"),
+            mock.patch.object(gui_server.shutil, "which", return_value="/usr/bin/fish"),
+            mock.patch.object(gui_server, "run_command") as run_command,
+        ):
+            gui_server.run_action(job, {"model": model, "hfToken": ""})
+
+        command = run_command.call_args.args[1]
+        self.assertEqual(command, ["/usr/bin/fish", str(gui_server.ROOT / "comandos.fish"), "vllm", model])
+        env = run_command.call_args.kwargs["env"]
+        self.assertEqual(env["VLLM_MODEL"], model)
+        self.assertEqual(env["LLM_BRIDGE_NONINTERACTIVE"], "1")
+        self.assertEqual(job.result["ollama"], "started")
+        self.assertEqual(job.result["embeddings"], "ready")
 
 
 class DatasetTests(unittest.TestCase):

@@ -40,12 +40,22 @@ test("la sección de entrenamiento explica sus parámetros", () => {
   assert.match(gui, /class="field-help"[^>]+data-help="Acumula gradientes antes de actualizar/);
 });
 
-test("la GUI permite borrar adaptadores persistidos", () => {
+test("la GUI permite borrar adaptadores persistidos y los descarga si están activos", () => {
   assert.match(gui, /data-action="delete-adapter">Borrar/);
   assert.match(gui, /delete-adapter.*window\.confirm/);
   assert.match(server, /if action == "delete-adapter"/);
-  assert.match(server, /Descarga primero el adaptador/);
+  assert.match(server, /Descargando \{name\} de vLLM antes de borrarlo/);
+  assert.match(server, /post_vllm\("\/v1\/unload_lora_adapter"/);
   assert.match(server, /shutil\.rmtree\(directory\)/);
+});
+
+test("iniciar vLLM desde la GUI reutiliza comandos.fish y levanta embeddings", () => {
+  assert.match(server, /\[fish, str\(ROOT \/ "comandos\.fish"\), "vllm", model\]/);
+  assert.match(server, /env\["LLM_BRIDGE_NONINTERACTIVE"\] = "1"/);
+  assert.match(server, /"ollama": "started"/);
+  assert.match(server, /"embeddings": "ready"/);
+  assert.match(commands, /start_embeddings/);
+  assert.match(commands, /LLM_BRIDGE_NONINTERACTIVE/);
 });
 
 test("la GUI permite comprobar efecto LoRA además de registrarlo", () => {
@@ -133,8 +143,8 @@ test("train.py valida la arquitectura antes de cargar el modelo y no usa Dataset
 test("la GUI vuelve a ser un wizard de cinco pasos con terminal separada", () => {
   assert.equal((gui.match(/class="step-button[^\"]*"[^>]+data-step="[0-4]"/g) || []).length, 5);
   assert.equal((gui.match(/class="step-panel[^\"]*"[^>]+data-panel="[0-4]"/g) || []).length, 5);
-  assert.match(gui, /id="prevStepBtn"[^>]*>Atrás</);
-  assert.match(gui, /id="nextStepBtn"[^>]*>Siguiente</);
+  assert.match(gui, /id="prevStepBtn"[^>]*>Atrás/);
+  assert.match(gui, /id="nextStepBtn"[^>]*>Siguiente/);
   assert.match(gui, /Terminal \/ logs/);
   assert.match(gui, /function showStep\(index\)/);
   assert.match(gui, /grid-template-columns:minmax\(0,1\.05fr\) minmax\(360px,\.8fr\)/);

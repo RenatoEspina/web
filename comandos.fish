@@ -297,8 +297,13 @@ function start_vllm
     set -gx VLLM_MODEL $model
 
     if not set -q HF_TOKEN; or test -z "$HF_TOKEN"
-        read -P 'HF_TOKEN de Hugging Face: ' -s HF_TOKEN
-        echo
+        if set -q LLM_BRIDGE_NONINTERACTIVE; and test "$LLM_BRIDGE_NONINTERACTIVE" = "1"
+            # La GUI local puede iniciar modelos públicos sin bloquearse esperando stdin.
+            set -gx HF_TOKEN ""
+        else
+            read -P 'HF_TOKEN de Hugging Face: ' -s HF_TOKEN
+            echo
+        end
     end
 
     set -gx HF_TOKEN $HF_TOKEN
