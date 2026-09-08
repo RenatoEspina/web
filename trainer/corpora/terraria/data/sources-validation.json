@@ -1,0 +1,74 @@
+[
+  {
+    "id": "sawmill",
+    "title": "Sawmill",
+    "url": "https://terraria.wiki.gg/wiki/Sawmill",
+    "split": "validation",
+    "qa": [
+      ["What is a Sawmill mainly used for?", "It is a crafting station for advanced Wood and furniture recipes, including items such as Beds, Looms, and Dressers."],
+      ["What is the Sawmill recipe?", "10 of any Wood, 2 of any Iron Bar, and 1 Chain at a Work Bench."],
+      ["How large is a placed Sawmill?", "3 tiles wide and 3 tiles high."],
+      ["Can a Sawmill be placed on Platforms?", "Yes. It can be placed on solid blocks or Platforms."]
+    ]
+  },
+  {
+    "id": "wormhole-potion",
+    "title": "Wormhole Potion",
+    "url": "https://terraria.wiki.gg/wiki/Wormhole_Potion",
+    "split": "validation",
+    "qa": [
+      ["What does a Wormhole Potion do?", "It teleports you to another player on the same team in multiplayer by selecting that player's icon on the full-screen map."],
+      ["Can a Wormhole Potion teleport me to a player on a different team?", "No. The target player must be on the same team."],
+      ["Does the Wormhole Potion work if the minimap is disabled?", "No. It cannot be used with the minimap disabled."],
+      ["What is the modern Wormhole Potion recipe output?", "3 Wormhole Potions from 3 Bottled Water, 1 Specular Fish, and 1 Blinkroot at a compatible potion crafting station."]
+    ]
+  },
+  {
+    "id": "chlorophyte-ore",
+    "title": "Chlorophyte Ore",
+    "url": "https://terraria.wiki.gg/wiki/Chlorophyte_Ore",
+    "split": "validation",
+    "qa": [
+      ["Where does Chlorophyte Ore naturally develop?", "In Hardmode, it develops in the lower Underground Jungle and deeper areas by converting nearby Mud or Jungle grass blocks under its placement rules."],
+      ["What minimum pickaxe tier is needed to mine Chlorophyte Ore?", "At least a Pickaxe Axe or Drax, which requires defeating all three mechanical bosses to obtain the needed materials."],
+      ["Is Chlorophyte Ore renewable?", "Yes. Existing Chlorophyte can slowly spread by converting nearby suitable blocks, subject to density and depth limits."],
+      ["Can Chlorophyte spread efficiently near the Surface?", "No. Its natural spread requires sufficient depth, in or below the lower part of the Underground layer."]
+    ]
+  },
+  {
+    "id": "pwnhammer",
+    "title": "Pwnhammer",
+    "url": "https://terraria.wiki.gg/wiki/Pwnhammer",
+    "split": "validation",
+    "qa": [
+      ["Which boss drops the Pwnhammer?", "The Wall of Flesh drops it."],
+      ["What progression object is the Pwnhammer especially used to destroy?", "Demon Altars and Crimson Altars in Hardmode."],
+      ["Can Demon or Crimson Altars be destroyed with the Pwnhammer before Hardmode starts?", "No. Altars can only be destroyed after the Wall of Flesh has been defeated and the world is in Hardmode."],
+      ["What happens when early Hardmode altars are smashed?", "They generate the world's Hardmode ore tiers in sequence: Cobalt or Palladium, then Mythril or Orichalcum, then Adamantite or Titanium."]
+    ]
+  },
+  {
+    "id": "hooks",
+    "title": "Hooks",
+    "url": "https://terraria.wiki.gg/wiki/Hooks",
+    "split": "validation",
+    "qa": [
+      ["What is the general purpose of Hooks?", "They are mobility tools that latch onto surfaces or Platforms and pull or anchor the player, making vertical and hazardous terrain easier to traverse."],
+      ["Do Hooks have to be placed in the hotbar to use the Grapple control?", "No. The Grapple control can use the equipped Hook or an available Hook from the inventory."],
+      ["Can some higher-tier Hooks attach to multiple surfaces at once?", "Yes. Some multi-hooks can maintain more than one grapple, allowing the player to suspend between surfaces."],
+      ["What basic Hook does a Journey Mode character start with?", "A Grappling Hook."]
+    ]
+  },
+  {
+    "id": "loom",
+    "title": "Loom",
+    "url": "https://terraria.wiki.gg/wiki/Loom",
+    "split": "validation",
+    "qa": [
+      ["What is a Loom mainly used to craft?", "Silk and items that use Silk or other cloth-related materials."],
+      ["How do I craft a Loom?", "Use 12 of any Wood at a Sawmill."],
+      ["How many Cobwebs are needed to craft one Silk?", "7 Cobwebs at a Loom."],
+      ["Can a Loom sometimes be found naturally?", "Yes. Looms can sometimes be found in Underground Cabins."]
+    ]
+  }
+]
