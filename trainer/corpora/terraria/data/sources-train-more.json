@@ -1,0 +1,98 @@
+[
+  {
+    "id": "merchant",
+    "title": "Merchant",
+    "url": "https://terraria.wiki.gg/wiki/Merchant",
+    "split": "train",
+    "qa": [
+      ["What are the initial requirements for the Merchant to move in?", "There must be a vacant valid house, and all players in the world must have more than 50 Silver Coins total in their inventories."],
+      ["Do coins stored in a Chest count toward the Merchant's arrival requirement?", "No. Coins in Chests or portable storage such as the Piggy Bank do not count; the coins must be in player inventories."],
+      ["Is the Merchant's 50-Silver requirement checked separately for each player?", "No. The requirement uses the combined amount carried in the inventories of all players in the current world."],
+      ["If the Merchant dies after moving in, do players have to satisfy the original money requirement again?", "No. The spawning criteria apply to his initial arrival; after death he can respawn later if suitable housing is available."]
+    ]
+  },
+  {
+    "id": "arms-dealer",
+    "title": "Arms Dealer",
+    "url": "https://terraria.wiki.gg/wiki/Arms_Dealer",
+    "split": "train",
+    "qa": [
+      ["What makes the Arms Dealer eligible to move in?", "A vacant valid house and at least one qualifying bullet or bullet-firing gun in a player's inventory."],
+      ["Does a gun stored in a Chest satisfy the Arms Dealer's arrival condition?", "No. Qualifying guns or bullets in Chests or portable storage do not count; one must be in a player's inventory."],
+      ["What kind of items does the Arms Dealer mainly sell?", "He mainly sells ammunition and guns."],
+      ["Does the Arms Dealer need a new gun requirement every time he respawns after death?", "No. The gun or bullet condition applies to his initial spawning; after that he can respawn when housing is available."]
+    ]
+  },
+  {
+    "id": "demolitionist",
+    "title": "Demolitionist",
+    "url": "https://terraria.wiki.gg/wiki/Demolitionist",
+    "split": "train",
+    "qa": [
+      ["What conditions allow the Demolitionist to move in?", "There must be a vacant valid house, a player must carry an explosive in their inventory, and the Merchant must already be present."],
+      ["Does an explosive stored in a Chest count for spawning the Demolitionist?", "No. The explosive must be in a player's inventory; storage containers and portable storage do not satisfy the requirement."],
+      ["What does the Demolitionist mainly sell?", "Explosives and related items."],
+      ["Does the Demolitionist need the original explosive condition again after he has already moved in once?", "No. The criteria are for the initial spawn; if he dies he can respawn later when housing is available."]
+    ]
+  },
+  {
+    "id": "goblin-tinkerer",
+    "title": "Goblin Tinkerer",
+    "url": "https://terraria.wiki.gg/wiki/Bound_Goblin",
+    "split": "train",
+    "qa": [
+      ["What must happen before the Bound Goblin can be found and rescued?", "A Goblin Army must have been defeated. The Bound Goblin can then be encountered in the Cavern layer in ordinary worlds."],
+      ["How do I turn the Bound Goblin into the Goblin Tinkerer NPC?", "Find the Bound Goblin and interact with him to free him. With vacant housing, the Goblin Tinkerer can then move in."],
+      ["What does the Goblin Tinkerer's reforge service do?", "It replaces a compatible weapon or accessory's modifier with a new random modifier for a coin cost."],
+      ["Does reforging always improve an item?", "No. The new modifier is random, so the resulting stats can be better or worse than before."]
+    ]
+  },
+  {
+    "id": "meteorite",
+    "title": "Meteorite",
+    "url": "https://terraria.wiki.gg/wiki/Meteorite",
+    "split": "train",
+    "qa": [
+      ["What pickaxe tier can mine Meteorite?", "A Tungsten Pickaxe or a stronger pickaxe can mine it; the Silver Pickaxe does not have enough pickaxe power."],
+      ["Why is touching Meteorite blocks dangerous?", "Contact inflicts the Burning debuff unless you have protection such as an Obsidian Skull or an active Obsidian Skin Potion."],
+      ["How is a Meteorite Bar crafted?", "Smelt 3 Meteorite at a Furnace to make one Meteorite Bar."],
+      ["Can explosives destroy Meteorite before Hardmode?", "No. Meteorite cannot be broken by explosives before Hardmode."]
+    ]
+  },
+  {
+    "id": "jungle-temple",
+    "title": "Jungle Temple",
+    "url": "https://terraria.wiki.gg/wiki/Temple",
+    "split": "train",
+    "qa": [
+      ["Where is the Jungle Temple located?", "It is a large enclosed Lihzahrd structure in the Underground Jungle."],
+      ["What is the normal progression requirement for entering the Jungle Temple?", "Defeat Plantera, obtain the Temple Key she drops, and use it on the locked Lihzahrd Door."],
+      ["Is the Temple Key consumed when the Jungle Temple door is unlocked?", "Yes. One Temple Key is consumed, and the Lihzahrd Door remains permanently unlocked for that world."],
+      ["What is the Lihzahrd Altar in the Temple used for?", "It is used with a Lihzahrd Power Cell to summon Golem."]
+    ]
+  },
+  {
+    "id": "keys",
+    "title": "Keys",
+    "url": "https://terraria.wiki.gg/wiki/Keys",
+    "split": "train",
+    "qa": [
+      ["What are Keys generally used for in Terraria?", "Most Keys are tools used to open locked Chests or other locked progression objects."],
+      ["Which common key is not consumed when used?", "The Shadow Key. Most other Keys are consumed on use."],
+      ["What does a Golden Key open?", "Gold Chests in the Dungeon."],
+      ["When can Hardmode Biome Keys be used to open their Dungeon Biome Chests?", "Only after Plantera has been defeated."]
+    ]
+  },
+  {
+    "id": "temple-key",
+    "title": "Temple Key",
+    "url": "https://terraria.wiki.gg/wiki/Temple_Key",
+    "split": "train",
+    "qa": [
+      ["Which boss drops the Temple Key?", "Plantera drops a Temple Key when defeated."],
+      ["What does the Temple Key unlock?", "The Lihzahrd Door that blocks normal access to the Jungle Temple."],
+      ["Is a Temple Key consumed when used?", "Yes. It is consumed when the Lihzahrd Door is unlocked."],
+      ["Do extra Temple Keys have an important progression use after the Jungle Temple door has already been opened?", "Normally no. Once the world's Lihzahrd Door has been unlocked, additional Temple Keys have no further functional progression use."]
+    ]
+  }
+]
