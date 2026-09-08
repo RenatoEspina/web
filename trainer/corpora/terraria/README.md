@@ -1,9 +1,9 @@
 # Terraria EN: curated SFT corpus
 
 English Terraria corpus for experimenting with QLoRA/SFT. The canonical source
-contains **168 conversations from 42 Official Terraria Wiki articles**:
+contains **200 conversations from 50 Official Terraria Wiki articles**:
 
-- **128 training conversations** from 32 source articles;
+- **160 training conversations** from 40 source articles;
 - **24 validation conversations** from 6 different source articles;
 - **16 final-evaluation conversations** from 4 additional source articles.
 
@@ -18,6 +18,7 @@ The versioned, editable source of truth is under `data/`:
 - `data/metadata.json`: scope, system prompt, attribution and split policy;
 - `data/sources-train-core.json`: translated core training topics;
 - `data/sources-train-extra.json`: additional English training topics;
+- `data/sources-train-more.json`: further NPC/progression/material topics;
 - `data/sources-validation.json`: development/validation topics;
 - `data/sources-evaluation.json`: final held-out topics.
 
@@ -63,7 +64,8 @@ generalization check.
 The corpus covers unmodded Terraria on modern PC versions and ordinary worlds
 unless a question says otherwise. Topics include early progression, health and
 mana, crafting, housing, NPCs, mobility, Hardmode, bosses, fishing, pylons,
-accessories and several crafting/progression systems.
+accessories, the Jungle Temple, Meteorite and several crafting/progression
+systems.
 
 Questions and answers are synthetic English paraphrases based on reviewed
 Official Terraria Wiki pages or indexed excerpts. This is not a complete wiki
