@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import re
 import shutil
@@ -26,6 +27,7 @@ SAFE_NAME = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$")
 def arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Fine-tuning SFT con QLoRA para LLM Bridge")
     parser.add_argument("--dataset", type=Path, required=True)
+    parser.add_argument("--validation-dataset", type=Path)
     parser.add_argument("--name", required=True)
     parser.add_argument("--output-root", type=Path, default=Path("adapters"))
     parser.add_argument("--model", default="Qwen/Qwen3.5-0.8B")
@@ -46,6 +48,27 @@ def package_version(name: str) -> str:
         return version(name)
     except PackageNotFoundError:
         return "unknown"
+
+
+def numeric_metrics(metrics: dict) -> dict[str, float]:
+    return {
+        key: float(value)
+        for key, value in metrics.items()
+        if isinstance(value, (int, float)) and math.isfinite(float(value))
+    }
+
+
+def with_perplexity(metrics: dict[str, float], loss_key: str) -> dict[str, float]:
+    result = dict(metrics)
+    loss = result.get(loss_key)
+    if loss is not None:
+        try:
+            perplexity = math.exp(loss)
+        except OverflowError:
+            perplexity = math.inf
+        if math.isfinite(perplexity):
+            result[f"{loss_key.removesuffix('_loss')}_perplexity"] = perplexity
+    return result
 
 
 def validate_model_architecture(model_name: str) -> str:
@@ -82,12 +105,19 @@ def main() -> None:
     staging = Path(tempfile.mkdtemp(prefix=f".{args.name}.training-", dir=output_root))
     try:
         examples, _ = load_jsonl(args.dataset)
+        validation_examples = None
+        if args.validation_dataset is not None:
+            validation_examples, _ = load_jsonl(args.validation_dataset)
+            if args.validation_dataset.resolve() == args.dataset.resolve():
+                raise ValueError("El dataset de validación debe ser distinto del dataset de entrenamiento")
+
         model_type = validate_model_architecture(args.model)
 
         tokenizer = AutoTokenizer.from_pretrained(args.model, trust_remote_code=False)
         if tokenizer.pad_token is None:
             tokenizer.pad_token = tokenizer.eos_token
         dataset = format_dataset(examples)
+        validation_dataset = format_dataset(validation_examples) if validation_examples else None
 
         compute_dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
         quantization = BitsAndBytesConfig(
@@ -114,6 +144,7 @@ def main() -> None:
             task_type="CAUSAL_LM",
             target_modules="all-linear",
         )
+        use_validation = validation_dataset is not None
         config = SFTConfig(
             output_dir=str(staging / "checkpoints"),
             num_train_epochs=args.epochs,
@@ -124,6 +155,10 @@ def main() -> None:
             max_length=args.max_length,
             logging_steps=1,
             save_strategy="epoch",
+            eval_strategy="epoch" if use_validation else "no",
+            load_best_model_at_end=use_validation,
+            metric_for_best_model="eval_loss" if use_validation else None,
+            greater_is_better=False if use_validation else None,
             save_total_limit=2,
             report_to="none",
             seed=args.seed,
@@ -139,26 +174,75 @@ def main() -> None:
             model=model,
             args=config,
             train_dataset=dataset,
+            eval_dataset=validation_dataset,
             processing_class=tokenizer,
             peft_config=lora,
         )
+
+        baseline_validation: dict[str, float] = {}
+        if use_validation:
+            print("\n== Validación antes del entrenamiento ==")
+            baseline_validation = with_perplexity(
+                numeric_metrics(trainer.evaluate(metric_key_prefix="baseline")),
+                "baseline_loss",
+            )
+
         result = trainer.train()
+
+        best_validation: dict[str, float] = {}
+        if use_validation:
+            print("\n== Validación del mejor checkpoint ==")
+            best_validation = with_perplexity(
+                numeric_metrics(trainer.evaluate(metric_key_prefix="validation")),
+                "validation_loss",
+            )
+
         trainer.model.save_pretrained(staging, safe_serialization=True)
         tokenizer.save_pretrained(staging)
 
+        best_checkpoint = (
+            Path(trainer.state.best_model_checkpoint).name
+            if trainer.state.best_model_checkpoint
+            else None
+        )
+        best_metric = (
+            float(trainer.state.best_metric)
+            if isinstance(trainer.state.best_metric, (int, float))
+            else None
+        )
+        quality_selection = None
+        if use_validation:
+            before = baseline_validation.get("baseline_loss")
+            after = best_validation.get("validation_loss")
+            relative_loss_improvement = None
+            if before is not None and after is not None and before > 0:
+                relative_loss_improvement = (before - after) / before
+            quality_selection = {
+                "metric": "eval_loss",
+                "direction": "minimize",
+                "bestCheckpoint": best_checkpoint,
+                "bestMetric": best_metric,
+                "baseline": baseline_validation,
+                "selected": best_validation,
+                "relativeLossImprovement": relative_loss_improvement,
+            }
+
         manifest = {
-            "schemaVersion": 1,
+            "schemaVersion": 2,
             "name": args.name,
             "baseModel": args.model,
             "modelType": model_type,
             "method": "SFT_QLORA",
             "createdAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "dataset": str(args.dataset.resolve()),
+            "validationDataset": str(args.validation_dataset.resolve()) if args.validation_dataset else None,
             "examples": len(examples),
+            "validationExamples": len(validation_examples or []),
             "parameters": {
                 "rank": args.rank,
                 "alpha": args.alpha,
                 "dropout": args.dropout,
+                "targetModules": "all-linear",
                 "assistantOnlyLoss": True,
                 "epochs": args.epochs,
                 "learningRate": args.learning_rate,
@@ -167,11 +251,8 @@ def main() -> None:
                 "maxLength": args.max_length,
                 "seed": args.seed,
             },
-            "metrics": {
-                key: float(value)
-                for key, value in result.metrics.items()
-                if isinstance(value, (int, float))
-            },
+            "metrics": numeric_metrics(result.metrics),
+            "qualitySelection": quality_selection,
             "versions": {
                 "torch": torch.__version__,
                 "transformers": package_version("transformers"),
@@ -186,7 +267,11 @@ def main() -> None:
         )
 
         staging.rename(destination)
-        print(json.dumps({"adapter": str(destination), "metrics": manifest["metrics"]}))
+        print(json.dumps({
+            "adapter": str(destination),
+            "metrics": manifest["metrics"],
+            "qualitySelection": quality_selection,
+        }))
     except Exception:
         shutil.rmtree(staging, ignore_errors=True)
         raise
