@@ -1,5 +1,5 @@
 import { endpoint } from "./config";
-import type { ChatMessage, CompletionResult, LlmConfig, LlmProvider, ProviderHealth } from "./types";
+import type { ChatMessage, CompletionOptions, CompletionResult, LlmConfig, LlmProvider, ProviderHealth } from "./types";
 
 type OpenAiResponse = {
   choices?: Array<{
@@ -22,7 +22,11 @@ function tokenCount(value: unknown): number | undefined {
 export class OpenAiCompatibleProvider implements LlmProvider {
   constructor(private readonly config: LlmConfig) {}
 
-  async complete(messages: ChatMessage[], signal: AbortSignal): Promise<CompletionResult> {
+  async complete(
+    messages: ChatMessage[],
+    signal: AbortSignal,
+    options?: CompletionOptions,
+  ): Promise<CompletionResult> {
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
     };
@@ -37,8 +41,8 @@ export class OpenAiCompatibleProvider implements LlmProvider {
       body: JSON.stringify({
         model: this.config.model,
         messages,
-        temperature: this.config.temperature,
-        max_tokens: this.config.maxTokens,
+        temperature: options?.temperature ?? this.config.temperature,
+        max_tokens: options?.maxTokens ?? this.config.maxTokens,
         stream: false,
       }),
       signal,
