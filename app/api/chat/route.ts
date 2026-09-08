@@ -3,6 +3,7 @@ import { withKnowledge } from "@/lib/documents/prompt";
 import { errorResponse, isAuthorized, workspaceIdFrom } from "@/lib/http/request";
 import { complete } from "@/lib/llm";
 import { getAllowedModels, getLlmConfig } from "@/lib/llm/config";
+import { withMasterPrompt } from "@/lib/llm/masterPrompt";
 import { RuntimeModelError, validateRuntimeModelSelection } from "@/lib/llm/runtime";
 import type { ChatMessage, ChatRole } from "@/lib/llm/types";
 
@@ -110,8 +111,9 @@ export async function POST(request: Request) {
     const knowledge = mode === "none"
       ? null
       : await buildKnowledgeContext(workspaceId!, mode, message, selectedDocumentIds);
-    const requestMessages = knowledge ? withKnowledge(messages, knowledge) : messages;
     const selectedModel = model || config.model;
+    const knowledgeMessages = knowledge ? withKnowledge(messages, knowledge) : messages;
+    const requestMessages = withMasterPrompt(knowledgeMessages, selectedModel);
     const inferenceSignal = AbortSignal.timeout(config.timeoutMs);
 
     await validateRuntimeModelSelection(config, selectedModel, inferenceSignal);

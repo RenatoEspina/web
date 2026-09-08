@@ -224,7 +224,7 @@ function wait_for_url
     set -l max_seconds $argv[3]
     set -l started (date +%s)
 
-    while not curl -fsS "$url" >/dev/null 2>&1
+    while not curl --connect-timeout 3 --max-time 5 -fsS "$url" >/dev/null 2>&1
         if not service_running $service
             echo
             compose logs --no-color --tail=100 $service
@@ -247,7 +247,7 @@ function stop_service
     compose stop $argv[1] >/dev/null 2>&1
 end
 
-function start_embeddings
+function prepare_embeddings
     require_docker
     set -l model $argv[1]
 
@@ -266,20 +266,46 @@ function start_embeddings
 
     wait_for_url ollama http://127.0.0.1:11434/api/tags 120
 
-    echo "Descargando/verificando el modelo de embeddings: $model"
+    if compose exec -T ollama ollama show "$model" >/dev/null 2>&1
+        echo "Modelo de embeddings ya instalado: $model"
+    else
+        echo "Descargando modelo de embeddings: $model"
+        compose exec -T ollama ollama pull "$model"; or fail \
+            "No fue posible descargar el modelo de embeddings '$model'."
+    end
 
-    compose exec -T ollama ollama pull "$model"; or fail \
-        "No fue posible descargar el modelo de embeddings '$model'."
+    echo "Ollama listo en http://127.0.0.1:11434; el smoke test se ejecutará sin bloquear el arranque de vLLM."
+end
+
+function verify_embeddings
+    set -l model $argv[1]
+
+    if test -z "$model"
+        set model $default_embedding_model
+    end
 
     set -l embedding_payload "{\"model\":\"$model\",\"input\":\"prueba de embeddings\"}"
 
-    curl -fsS http://127.0.0.1:11434/api/embed \
+    echo "Verificando inferencia de embeddings con $model..."
+    curl --connect-timeout 5 --max-time 180 -fsS http://127.0.0.1:11434/api/embed \
         -H "Content-Type: application/json" \
         -d "$embedding_payload" \
-        >/dev/null; or fail \
-        "Ollama está activo, pero no pudo generar embeddings con '$model'."
+        >/dev/null; or begin
+        compose logs --no-color --tail=100 ollama
+        fail "Ollama está activo, pero no pudo generar embeddings con '$model' dentro de 180 segundos."
+    end
 
     echo "Embeddings disponibles en http://127.0.0.1:11434 usando $model"
+end
+
+function start_embeddings
+    set -l model $argv[1]
+    if test -z "$model"
+        set model $default_embedding_model
+    end
+
+    prepare_embeddings "$model"
+    verify_embeddings "$model"
 end
 
 function start_vllm
@@ -314,8 +340,8 @@ function start_vllm
 
     require_command curl
 
-    # Ollama genera los embeddings y vLLM genera las respuestas.
-    start_embeddings
+    # Prepara Ollama primero, pero no bloquea vLLM esperando una inferencia 4B en CPU.
+    prepare_embeddings "$default_embedding_model"
 
     if not docker image inspect "$VLLM_IMAGE" >/dev/null 2>&1
         echo "Descargando $VLLM_IMAGE..."
@@ -332,8 +358,10 @@ function start_vllm
     end
 
     wait_for_url vllm http://127.0.0.1:8000/health 900
-
     echo "vLLM está disponible en http://127.0.0.1:8000"
+
+    # Con vLLM ya iniciado, confirma que Ollama realmente puede servir embeddings.
+    verify_embeddings "$default_embedding_model"
     compose ps vllm ollama
 end
 

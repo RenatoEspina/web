@@ -72,8 +72,9 @@ services:
       - ollama-data:/root/.ollama
     cpuset: "0-11"
     environment:
-      # Fuerza Ollama a ejecutarse en CPU
-      OLLAMA_LLM_LIBRARY: "cpu"
+      # Fuerza Ollama a CPU y usa el runner AVX2 disponible en el equipo.
+      # CUDA_VISIBLE_DEVICES evita competir por los 6 GB de VRAM usados por vLLM.
+      OLLAMA_LLM_LIBRARY: "cpu_avx2"
       OLLAMA_VULKAN: "false"
       CUDA_VISIBLE_DEVICES: "-1"
     healthcheck:

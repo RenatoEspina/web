@@ -18,6 +18,7 @@ from datasets import Dataset
 from peft import LoraConfig, prepare_model_for_kbit_training
 from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 from trl import SFTConfig, SFTTrainer
+from trl.chat_template_utils import get_training_chat_template
 
 from dataset_validation import load_jsonl
 
@@ -89,6 +90,59 @@ def format_dataset(examples: list[dict]) -> Dataset:
     return Dataset.from_list(examples)
 
 
+def prepare_assistant_only_template(tokenizer, examples: list[dict]) -> None:
+    """Fija y comprueba la plantilla que TRL necesita para assistant_only_loss."""
+    patched = get_training_chat_template(tokenizer)
+    if patched is not None:
+        tokenizer.chat_template = patched
+        print("Chat template: TRL aplicó una plantilla compatible con assistant_only_loss")
+    else:
+        print("Chat template: la plantilla del tokenizer ya es compatible con TRL")
+
+    sample = next(
+        (
+            example["messages"]
+            for example in examples
+            if any(message.get("role") == "assistant" for message in example.get("messages", []))
+        ),
+        None,
+    )
+    if sample is None:
+        raise RuntimeError("El dataset no contiene ningún turno assistant para entrenar")
+
+    try:
+        encoded = tokenizer.apply_chat_template(
+            sample,
+            tokenize=True,
+            return_dict=True,
+            return_assistant_tokens_mask=True,
+            add_generation_prompt=False,
+        )
+    except Exception as error:
+        raise RuntimeError(
+            "La plantilla de chat no pudo generar la máscara de tokens del asistente requerida por "
+            "assistant_only_loss. Reinstala las dependencias fijadas del trainer."
+        ) from error
+
+    assistant_mask = encoded.get("assistant_masks")
+    input_ids = encoded.get("input_ids")
+    if not isinstance(assistant_mask, list) or not assistant_mask or not any(assistant_mask):
+        raise RuntimeError(
+            "La plantilla de chat produjo una máscara assistant vacía; continuar entrenaría con una pérdida inválida."
+        )
+    if not isinstance(input_ids, list) or len(input_ids) != len(assistant_mask):
+        raise RuntimeError("La máscara assistant no coincide con los tokens generados por la plantilla de chat")
+    if all(assistant_mask):
+        raise RuntimeError(
+            "La plantilla marcó todos los tokens como assistant; se aborta para no entrenar sobre system/user por error."
+        )
+
+    print(
+        "assistant_only_loss: máscara OK "
+        f"({sum(int(value) for value in assistant_mask)}/{len(assistant_mask)} tokens assistant en la muestra)"
+    )
+
+
 def main() -> None:
     args = arguments()
     if not SAFE_NAME.fullmatch(args.name):
@@ -116,6 +170,7 @@ def main() -> None:
         tokenizer = AutoTokenizer.from_pretrained(args.model, trust_remote_code=False)
         if tokenizer.pad_token is None:
             tokenizer.pad_token = tokenizer.eos_token
+        prepare_assistant_only_template(tokenizer, examples)
         dataset = format_dataset(examples)
         validation_dataset = format_dataset(validation_examples) if validation_examples else None
 
