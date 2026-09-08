@@ -42,12 +42,6 @@ EOF
   fi
 }
 
-if curl -fsS "$URL/api/health" >/dev/null 2>&1; then
-  install_desktop_launcher
-  open_browser
-  exit 0
-fi
-
 PYTHON=""
 for candidate in python3.13 python3 python; do
   if command -v "$candidate" >/dev/null 2>&1; then
@@ -59,6 +53,19 @@ done
 if [[ -z "$PYTHON" ]]; then
   echo "Error: se necesita Python 3 para iniciar la GUI local." >&2
   exit 1
+fi
+
+# Los JSONL de Terraria son artefactos locales derivados del corpus inglés
+# versionado. Materializarlos aquí evita mantener copias generadas enormes en git
+# y garantiza que la GUI siempre muestre la revisión actual del corpus.
+if [[ -f "$ROOT/trainer/corpora/terraria/build.py" ]]; then
+  "$PYTHON" "$ROOT/trainer/corpora/terraria/build.py" >/dev/null
+fi
+
+if curl -fsS "$URL/api/health" >/dev/null 2>&1; then
+  install_desktop_launcher
+  open_browser
+  exit 0
 fi
 
 nohup "$PYTHON" "$ROOT/trainer/gui_server.py" --host "$HOST" --port "$PORT" >>"$LOG_FILE" 2>&1 &
