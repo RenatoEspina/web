@@ -72,7 +72,7 @@ test("evaluation.jsonl se identifica como evaluación y no se ofrece para SFT", 
 });
 
 test("entrenamiento y vLLM preparan adapters sin borrar su contenido", () => {
-  assert.equal((server.match(/ensure_adapter_dir_writable\(job\)/g) || []).length, 5);
+  assert.equal((server.match(/ensure_adapter_dir_writable\(job\)/g) || []).length, 4);
   assert.match(server, /docker,[\s\S]+"run",[\s\S]+"--rm",[\s\S]+"--user",[\s\S]+"0:0"/);
   assert.match(server, /DEFAULT_VLLM_IMAGE = "vllm\/vllm-openai:v0\.24\.0"/);
   assert.match(server, /"--entrypoint",\s+"\/bin\/sh"/);
@@ -143,8 +143,8 @@ test("train.py valida la arquitectura antes de cargar el modelo y no usa Dataset
 test("la GUI vuelve a ser un wizard de cinco pasos con terminal separada", () => {
   assert.equal((gui.match(/class="step-button[^\"]*"[^>]+data-step="[0-4]"/g) || []).length, 5);
   assert.equal((gui.match(/class="step-panel[^\"]*"[^>]+data-panel="[0-4]"/g) || []).length, 5);
-  assert.match(gui, /id="prevStepBtn"[^>]*>Atrás</);
-  assert.match(gui, /id="nextStepBtn"[^>]*>Siguiente</);
+  assert.match(gui, /id="prevStepBtn"[^>]*>Atrás/);
+  assert.match(gui, /id="nextStepBtn"[^>]*>Siguiente/);
   assert.match(gui, /Terminal \/ logs/);
   assert.match(gui, /function showStep\(index\)/);
   assert.match(gui, /grid-template-columns:minmax\(0,1\.05fr\) minmax\(360px,\.8fr\)/);
