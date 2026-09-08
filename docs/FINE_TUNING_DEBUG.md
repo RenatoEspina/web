@@ -1,6 +1,6 @@
 # Diagnóstico de calidad y rendimiento de LoRA
 
-Esta guía separa cuatro causas que suelen confundirse: selección incorrecta del adapter, modelo base desincronizado, terminación temprana aprendida por el fine-tuning y rendimiento real de vLLM/GPU.
+Esta guía separa cuatro causas que suelen confundirse: selección incorrecta del adapter, modelo base desincronizado, terminación temprana aprendida por el fine-tuning y diferencias entre el contexto usado durante SFT y el usado al servir.
 
 ## 1. Confirmar el estado de vLLM
 
@@ -19,7 +19,7 @@ Comprueba también la configuración persistida:
 grep -E '^(LLM_MODEL|LLM_ADAPTER_MODELS)=' .env.local
 ```
 
-El gateway ahora valida `/v1/models` antes de cada inferencia con vLLM. Si el modelo base de `.env.local` no coincide con el realmente servido, o si el `parent` del LoRA no coincide, `/api/chat` responde con HTTP 409 y un mensaje explícito en vez de generar en un estado incoherente.
+El gateway valida `/v1/models` antes de cada inferencia con vLLM. Si el modelo base de `.env.local` no coincide con el realmente servido, o si el `parent` del LoRA no coincide, `/api/chat` responde con HTTP 409 y un mensaje explícito en vez de generar en un estado incoherente.
 
 ## 2. Comprobar que el adapter pertenece al modelo base correcto
 
@@ -74,24 +74,40 @@ Interpretación rápida:
 - **`finishReason=length`:** la salida chocó con `LLM_MAX_TOKENS`; no es EOS aprendido.
 - **HTTP 409:** hay una desincronización entre gateway, vLLM o el `parent` del adapter.
 
+Para adapters Terraria, `/api/chat` hace además una clasificación de scope con el modelo base. Esa clasificación usa `temperature=0` y `maxTokens=8`; no reutiliza los parámetros de generación globales. Si `scope.allowed` es `false`, la consulta se rechaza antes de llegar al LoRA.
+
 ## 5. Aislar completamente el frontend y el gateway
 
-Haz la misma consulta directamente contra vLLM. Primero al modelo base:
+Para comprobar el efecto del LoRA sin contaminar la prueba con el gateway, envía la misma conversación directamente a vLLM.
+
+En Terraria, el adapter fue entrenado siempre con el `system` de `trainer/corpora/terraria/data/metadata.json`. El serving normal sin documentos usa exactamente ese mismo texto. Para una comparación justa, úsalo tanto con el modelo base como con el adapter:
 
 ```bash
+SYSTEM_PROMPT=$(jq -r '.system' trainer/corpora/terraria/data/metadata.json)
+
 curl -s http://127.0.0.1:8000/v1/chat/completions \
   -H 'Content-Type: application/json' \
-  -d '{
-    "model":"Qwen/Qwen3.5-0.8B",
-    "messages":[{"role":"user","content":"EXACTAMENTE LA MISMA PREGUNTA"}],
-    "temperature":0,
-    "max_tokens":512
-  }' | jq '{text:.choices[0].message.content, finish:.choices[0].finish_reason, usage:.usage}'
+  -d "$(jq -n \
+    --arg model 'Qwen/Qwen3.5-0.8B' \
+    --arg system "$SYSTEM_PROMPT" \
+    --arg question 'EXACTAMENTE LA MISMA PREGUNTA' \
+    '{
+      model:$model,
+      messages:[
+        {role:"system",content:$system},
+        {role:"user",content:$question}
+      ],
+      temperature:0,
+      max_tokens:512
+    }')" \
+  | jq '{text:.choices[0].message.content, finish:.choices[0].finish_reason, usage:.usage}'
 ```
 
-Después repite cambiando únicamente `model` por el nombre del adapter.
+Después repite cambiando únicamente `model` por el nombre del adapter. No cambies el `system`, la pregunta ni los parámetros entre ambas ejecuciones.
 
-Si la respuesta pobre y corta también aparece directamente en vLLM, el frontend queda descartado como causa. Si vLLM directo funciona bien pero `/api/chat` no, revisa el prompt, contexto documental y configuración del gateway.
+Si la respuesta pobre también aparece directamente en vLLM usando el mismo `system` que en SFT, el frontend y el clasificador quedan descartados como causa. Si el LoRA directo funciona bien pero `/api/chat` no, revisa `scope`, historial y modo documental.
+
+Con RAG/CAG no existe paridad exacta con SFT porque necesariamente se añade contexto documental. Para Terraria, el gateway conserva el prompt SFT exacto como prefijo del único `system` y fusiona ahí las instrucciones documentales; evita enviar dos mensajes `system` consecutivos.
 
 ## 6. Observar GPU y logs durante exactamente la misma prueba
 
@@ -131,6 +147,8 @@ Antes de tocar hiperparámetros, reúne para la misma pregunta:
 - `finishReason` de ambos;
 - resultado de `earlyStopSuspected`;
 - salida de `/v1/models` con `parent`;
-- `assistantOnlyLoss` del manifest.
+- `assistantOnlyLoss` del manifest;
+- para adapters de dominio, decisión `scope` del gateway;
+- confirmación de que la prueba directa usa el mismo `system` que el entrenamiento.
 
 Con esos datos se puede distinguir de forma reproducible entre un problema de integración, un problema del runtime LoRA y un problema de entrenamiento.
