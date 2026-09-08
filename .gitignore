@@ -49,3 +49,10 @@ next-env.d.ts
 /trainer/__pycache__/
 /tests/__pycache__/
 /trainer/corpora/**/__pycache__/
+
+# generated Terraria JSONL artifacts; canonical English data lives in
+# trainer/corpora/terraria/data/*.json and is materialized locally by build.py.
+/trainer/examples/terraria-training.jsonl
+/trainer/examples/terraria-validation.jsonl
+/trainer/corpora/terraria/validation.jsonl
+/trainer/corpora/terraria/evaluation.jsonl
