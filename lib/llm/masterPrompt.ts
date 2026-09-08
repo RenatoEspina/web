@@ -60,5 +60,20 @@ export function parseTerrariaScopeDecision(content: string): boolean {
 
 export function withMasterPrompt(messages: ChatMessage[], model: string): ChatMessage[] {
   if (!isTerrariaModel(model)) return messages;
+
+  const [first, ...rest] = messages;
+  if (first?.role === "system") {
+    // RAG/CAG ya aporta instrucciones documentales como system. Las fusionamos
+    // para evitar dos roles system consecutivos y preservamos el prompt SFT
+    // exacto como prefijo del único system servido al adapter.
+    return [
+      {
+        role: "system",
+        content: `${TERRARIA_ADAPTER_SYSTEM_PROMPT}\n\n${first.content}`,
+      },
+      ...rest,
+    ];
+  }
+
   return [{ role: "system", content: TERRARIA_ADAPTER_SYSTEM_PROMPT }, ...messages];
 }
