@@ -128,6 +128,10 @@ export async function POST(request: Request) {
         terrariaScopeMessages(messages),
         inferenceSignal,
         config.model,
+        {
+          temperature: 0,
+          maxTokens: 8,
+        },
       );
       const allowed = parseTerrariaScopeDecision(scopeCompletion.content);
       scope = {
