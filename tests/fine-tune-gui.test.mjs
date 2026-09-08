@@ -40,12 +40,22 @@ test("la sección de entrenamiento explica sus parámetros", () => {
   assert.match(gui, /class="field-help"[^>]+data-help="Acumula gradientes antes de actualizar/);
 });
 
-test("la GUI permite borrar adaptadores persistidos", () => {
+test("la GUI permite borrar adaptadores persistidos y los descarga si están activos", () => {
   assert.match(gui, /data-action="delete-adapter">Borrar/);
   assert.match(gui, /delete-adapter.*window\.confirm/);
   assert.match(server, /if action == "delete-adapter"/);
-  assert.match(server, /Descarga primero el adaptador/);
+  assert.match(server, /Descargando \{name\} de vLLM antes de borrarlo/);
+  assert.match(server, /post_vllm\("\/v1\/unload_lora_adapter"/);
   assert.match(server, /shutil\.rmtree\(directory\)/);
+});
+
+test("iniciar vLLM desde la GUI reutiliza comandos.fish y levanta embeddings", () => {
+  assert.match(server, /\[fish, str\(ROOT \/ "comandos\.fish"\), "vllm", model\]/);
+  assert.match(server, /env\["LLM_BRIDGE_NONINTERACTIVE"\] = "1"/);
+  assert.match(server, /"ollama": "started"/);
+  assert.match(server, /"embeddings": "ready"/);
+  assert.match(commands, /start_embeddings/);
+  assert.match(commands, /LLM_BRIDGE_NONINTERACTIVE/);
 });
 
 test("la GUI permite comprobar efecto LoRA además de registrarlo", () => {
@@ -62,7 +72,7 @@ test("evaluation.jsonl se identifica como evaluación y no se ofrece para SFT", 
 });
 
 test("entrenamiento y vLLM preparan adapters sin borrar su contenido", () => {
-  assert.equal((server.match(/ensure_adapter_dir_writable\(job\)/g) || []).length, 4);
+  assert.equal((server.match(/ensure_adapter_dir_writable\(job\)/g) || []).length, 5);
   assert.match(server, /docker,[\s\S]+"run",[\s\S]+"--rm",[\s\S]+"--user",[\s\S]+"0:0"/);
   assert.match(server, /DEFAULT_VLLM_IMAGE = "vllm\/vllm-openai:v0\.24\.0"/);
   assert.match(server, /"--entrypoint",\s+"\/bin\/sh"/);
