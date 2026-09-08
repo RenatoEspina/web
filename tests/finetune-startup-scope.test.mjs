@@ -7,6 +7,13 @@ const compose = await readFile(new URL("../docker-compose.yml", import.meta.url)
 const trainer = await readFile(new URL("../trainer/train.py", import.meta.url), "utf8");
 const masterPrompt = await readFile(new URL("../lib/llm/masterPrompt.ts", import.meta.url), "utf8");
 const chatRoute = await readFile(new URL("../app/api/chat/route.ts", import.meta.url), "utf8");
+const llmTypes = await readFile(new URL("../lib/llm/types.ts", import.meta.url), "utf8");
+const llmIndex = await readFile(new URL("../lib/llm/index.ts", import.meta.url), "utf8");
+const openAiProvider = await readFile(new URL("../lib/llm/openai-compatible.ts", import.meta.url), "utf8");
+const ollamaProvider = await readFile(new URL("../lib/llm/ollama.ts", import.meta.url), "utf8");
+const terrariaMetadata = JSON.parse(
+  await readFile(new URL("../trainer/corpora/terraria/data/metadata.json", import.meta.url), "utf8"),
+);
 
 test("vLLM inicia antes del smoke test pesado de embeddings", () => {
   const prepare = commands.indexOf('prepare_embeddings "$default_embedding_model"');
@@ -39,9 +46,16 @@ test("SFT valida la máscara assistant-only antes de cargar el modelo cuantizado
   assert.match(trainer, /if all\(assistant_mask\)/);
 });
 
-test("los modelos Terraria reciben master prompt y filtro duro de dominio", () => {
-  assert.match(masterPrompt, /TERRARIA_MASTER_PROMPT/);
-  assert.match(masterPrompt, /scope is strictly Terraria/i);
+test("Terraria usa el mismo system prompt en SFT y serving", () => {
+  assert.equal(typeof terrariaMetadata.system, "string");
+  assert.ok(terrariaMetadata.system.length > 80);
+  assert.match(masterPrompt, /metadata\.json/);
+  assert.match(masterPrompt, /TERRARIA_ADAPTER_SYSTEM_PROMPT = terrariaMetadata\.system/);
+  assert.match(masterPrompt, /TERRARIA_MASTER_PROMPT = TERRARIA_ADAPTER_SYSTEM_PROMPT/);
+  assert.match(masterPrompt, /content: TERRARIA_ADAPTER_SYSTEM_PROMPT/);
+});
+
+test("los modelos Terraria mantienen filtro duro con clasificación determinista", () => {
   assert.match(masterPrompt, /TERRARIA_OUT_OF_SCOPE_MESSAGE/);
   assert.match(masterPrompt, /Solo puedo responder preguntas relacionadas con Terraria\./);
   assert.match(masterPrompt, /LLM_TERRARIA_MODELS/);
@@ -49,7 +63,7 @@ test("los modelos Terraria reciben master prompt y filtro duro de dominio", () =
   assert.match(masterPrompt, /TERRARIA_SCOPE_CLASSIFIER_PROMPT/);
   assert.match(masterPrompt, /Return exactly one label and nothing else: TERRARIA or OUTSIDE/);
   assert.match(masterPrompt, /parseTerrariaScopeDecision/);
-  assert.match(masterPrompt, /content\.trim\(\)\.toUpperCase\(\) === "TERRARIA"/);
+  assert.match(masterPrompt, /TERRARIA\["'`\]\*\[.!\]\?/);
 
   const classify = chatRoute.indexOf("terrariaScopeMessages(messages)");
   const reject = chatRoute.indexOf("scope_rejected", classify);
@@ -60,7 +74,16 @@ test("los modelos Terraria reciben master prompt y filtro duro de dominio", () =
   assert.ok(reject > classify);
   assert.ok(knowledge > reject);
   assert.ok(adapterCompletion > knowledge);
-  assert.match(chatRoute, /complete\([\s\S]*terrariaScopeMessages\(messages\)[\s\S]*config\.model/);
+  assert.match(chatRoute, /terrariaScopeMessages\(messages\)[\s\S]*config\.model[\s\S]*temperature: 0[\s\S]*maxTokens: 8/);
   assert.match(chatRoute, /message: TERRARIA_OUT_OF_SCOPE_MESSAGE/);
   assert.match(chatRoute, /withMasterPrompt\(knowledgeMessages, selectedModel\)/);
+});
+
+test("los providers respetan overrides sin cambiar defaults globales", () => {
+  assert.match(llmTypes, /interface CompletionOptions/);
+  assert.match(llmIndex, /options\?: CompletionOptions/);
+  assert.match(openAiProvider, /options\?\.temperature \?\? this\.config\.temperature/);
+  assert.match(openAiProvider, /options\?\.maxTokens \?\? this\.config\.maxTokens/);
+  assert.match(ollamaProvider, /options\?\.temperature \?\? this\.config\.temperature/);
+  assert.match(ollamaProvider, /options\?\.maxTokens \?\? this\.config\.maxTokens/);
 });
