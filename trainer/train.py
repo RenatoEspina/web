@@ -72,6 +72,26 @@ def with_perplexity(metrics: dict[str, float], loss_key: str) -> dict[str, float
     return result
 
 
+def common_system_prompt(examples: list[dict]) -> str | None:
+    """Devuelve el único system prompt común que realmente vio todo el SFT."""
+    prompts: set[str] = set()
+    for example in examples:
+        messages = example.get("messages")
+        if not isinstance(messages, list):
+            return None
+        systems = [
+            message.get("content")
+            for message in messages
+            if isinstance(message, dict) and message.get("role") == "system"
+        ]
+        if len(systems) != 1 or not isinstance(systems[0], str) or not systems[0].strip():
+            return None
+        prompts.add(systems[0].strip())
+        if len(prompts) > 1:
+            return None
+    return next(iter(prompts)) if len(prompts) == 1 else None
+
+
 def validate_model_architecture(model_name: str) -> str:
     """Falla antes de reservar VRAM si Transformers no conoce el checkpoint."""
     try:
@@ -282,6 +302,7 @@ def main() -> None:
                 "relativeLossImprovement": relative_loss_improvement,
             }
 
+        system_prompt = common_system_prompt(examples)
         manifest = {
             "schemaVersion": 2,
             "name": args.name,
@@ -293,6 +314,10 @@ def main() -> None:
             "validationDataset": str(args.validation_dataset.resolve()) if args.validation_dataset else None,
             "examples": len(examples),
             "validationExamples": len(validation_examples or []),
+            "serving": {
+                "systemPrompt": system_prompt,
+                "systemPromptSource": "common_training_system" if system_prompt else None,
+            },
             "parameters": {
                 "rank": args.rank,
                 "alpha": args.alpha,
