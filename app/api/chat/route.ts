@@ -3,6 +3,7 @@ import { withKnowledge } from "@/lib/documents/prompt";
 import { errorResponse, isAuthorized, workspaceIdFrom } from "@/lib/http/request";
 import { complete } from "@/lib/llm";
 import { getAllowedModels, getLlmConfig } from "@/lib/llm/config";
+import { RuntimeModelError, validateRuntimeModelSelection } from "@/lib/llm/runtime";
 import type { ChatMessage, ChatRole } from "@/lib/llm/types";
 
 export const dynamic = "force-dynamic";
@@ -111,11 +112,14 @@ export async function POST(request: Request) {
       : await buildKnowledgeContext(workspaceId!, mode, message, selectedDocumentIds);
     const requestMessages = knowledge ? withKnowledge(messages, knowledge) : messages;
     const selectedModel = model || config.model;
-    const answer = await complete(requestMessages, AbortSignal.timeout(config.timeoutMs), selectedModel);
+    const inferenceSignal = AbortSignal.timeout(config.timeoutMs);
+
+    await validateRuntimeModelSelection(config, selectedModel, inferenceSignal);
+    const completion = await complete(requestMessages, inferenceSignal, selectedModel);
     const effectiveMode: KnowledgeMode = knowledge?.mode ?? "none";
 
     return Response.json({
-      message: answer,
+      message: completion.content,
       provider: config.provider,
       model: selectedModel,
       mode: effectiveMode,
@@ -123,9 +127,20 @@ export async function POST(request: Request) {
       cacheHit: knowledge?.cacheHit ?? false,
       embeddingUsed: knowledge?.embeddingUsed ?? false,
       contextTruncated: knowledge?.truncated ?? false,
+      inference: {
+        latencyMs: completion.latencyMs,
+        finishReason: completion.finishReason,
+        promptTokens: completion.usage.promptTokens,
+        completionTokens: completion.usage.completionTokens,
+        totalTokens: completion.usage.totalTokens,
+        tokensPerSecond: completion.tokensPerSecond,
+      },
     });
   } catch (error) {
     console.error("[llm-bridge] Chat request failed", error);
+    if (error instanceof RuntimeModelError) {
+      return errorResponse(error.message, error.status);
+    }
     if (error instanceof Error && error.name === "TimeoutError") {
       return errorResponse("El modelo tardó demasiado en responder.", 504);
     }
