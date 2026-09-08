@@ -443,14 +443,12 @@ def adapter_is_loaded(name: str) -> bool:
 
 
 def delete_adapter(job: Job, name: str) -> None:
-    """Remove one persisted adapter only after it is unloaded from vLLM."""
+    """Descarga, retira de la allowlist y borra un adaptador persistido."""
     directory = ADAPTER_DIR / name
     if ADAPTER_DIR.is_symlink() or directory.is_symlink() or not directory.is_dir():
         raise RuntimeError(f"No existe un adaptador válido llamado '{name}'.")
     if directory.parent.resolve() != ADAPTER_DIR.resolve():
         raise RuntimeError("La ruta del adaptador está fuera de adapters/.")
-    if adapter_is_loaded(name):
-        raise RuntimeError(f"Descarga primero el adaptador '{name}' de vLLM antes de borrarlo.")
 
     export_base = ADAPTER_DIR / ".vllm-exports"
     if export_base.is_symlink() or (export_base.exists() and not export_base.is_dir()):
@@ -461,14 +459,23 @@ def delete_adapter(job: Job, name: str) -> None:
     if export_root.exists() and not export_root.is_dir():
         raise RuntimeError("La caché de exportación del adaptador no es una carpeta válida.")
 
+    ensure_adapter_dir_writable(job)
+    was_loaded = adapter_is_loaded(name)
+    runtime_path: str | None = None
     allowlist_removed = False
+
+    if was_loaded:
+        runtime_path = loaded_adapter_path(name)
+        append_log(job, f"Descargando {name} de vLLM antes de borrarlo...")
+        response = post_vllm("/v1/unload_lora_adapter", {"lora_name": name})
+        append_log(job, response or "Adaptador descargado.")
+
     try:
-        ensure_adapter_dir_writable(job)
+        # Primero actualiza la allowlist mientras los archivos siguen intactos;
+        # si esto falla, todavía es posible restaurar el runtime sin reconstruirlo.
+        allowlist_removed = set_adapter_allowed_in_env(name, False)
         if export_root.exists():
             shutil.rmtree(export_root)
-        # Retira la allowlist antes del borrado para que una futura
-        # reinicialización no intente cargar un adaptador que ya no existe.
-        allowlist_removed = set_adapter_allowed_in_env(name, False)
         shutil.rmtree(directory)
     except (OSError, RuntimeError) as error:
         if allowlist_removed:
@@ -476,9 +483,19 @@ def delete_adapter(job: Job, name: str) -> None:
                 set_adapter_allowed_in_env(name, True)
             except (OSError, RuntimeError):
                 append_log(job, f"No se pudo restaurar la allowlist tras el borrado incompleto de {name}.")
+        if was_loaded and directory.exists():
+            try:
+                restored_path = prepare_runtime_adapter(job, name)
+                post_vllm(
+                    "/v1/load_lora_adapter",
+                    {"lora_name": name, "lora_path": restored_path or runtime_path or f"/adapters/{name}"},
+                )
+                append_log(job, f"Se restauró {name} en vLLM tras fallar el borrado.")
+            except Exception as rollback_error:
+                append_log(job, f"No se pudo restaurar {name} en vLLM: {rollback_error}")
         raise RuntimeError(f"No se pudo borrar el adaptador '{name}': {error}") from error
 
-    append_log(job, f"Adaptador {name} borrado de adapters/ y de su caché de exportación.")
+    append_log(job, f"Adaptador {name} borrado de adapters/, allowlist y caché de exportación.")
 
 
 def rollback_adapter_runtime(name: str, allowed: bool, runtime_path: str | None = None) -> None:
@@ -644,16 +661,24 @@ def run_action(job: Job, payload: dict[str, Any]) -> None:
         model = validate_model(payload.get("model"))
         ensure_adapter_dir_writable(job)
         hf_token = validate_hf_token(payload.pop("hfToken", ""))
+        fish = shutil.which("fish")
+        if not fish:
+            raise RuntimeError("No se encontró fish; la GUI necesita ./comandos.fish para iniciar vLLM y embeddings.")
         env = environment_with_hf_token(hf_token)
         env["VLLM_MODEL"] = model
+        env["LLM_BRIDGE_NONINTERACTIVE"] = "1"
         run_command(
             job,
-            ["docker", "compose", "-p", "llm-bridge", "up", "-d", "vllm"],
+            [fish, str(ROOT / "comandos.fish"), "vllm", model],
             env=env,
-            label=f"Iniciando vLLM con {model}",
+            label=f"Iniciando vLLM + Ollama embeddings con {model}",
         )
-        wait_for_vllm(job, timeout=900)
-        job.result = {"vllm": "started", "model": model}
+        job.result = {
+            "vllm": "started",
+            "ollama": "started",
+            "embeddings": "ready",
+            "model": model,
+        }
         return
     if action == "stop-vllm":
         run_command(
