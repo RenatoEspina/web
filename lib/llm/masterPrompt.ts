@@ -47,10 +47,31 @@ function pathInside(parent: string, candidate: string): boolean {
   return value === "" || (!value.startsWith("..") && !isAbsolute(value));
 }
 
-function commonDatasetSystemPrompt(datasetPath: string): string | null {
+function currentDatasetPath(datasetPath: string): string | null {
   const trainerRoot = resolve(process.cwd(), "trainer");
-  const resolvedDataset = resolve(datasetPath);
-  if (!pathInside(trainerRoot, resolvedDataset)) return null;
+  let candidate = resolve(datasetPath);
+  if (pathInside(trainerRoot, candidate)) return candidate;
+
+  // manifest.json conserva una ruta absoluta para reproducibilidad. Si el repo
+  // se movió desde que se entrenó el adapter, remapea únicamente el sufijo
+  // trainer/... dentro del checkout actual y vuelve a aplicar el límite de ruta.
+  const normalized = datasetPath.replaceAll("\\", "/");
+  const marker = "/trainer/";
+  const index = normalized.lastIndexOf(marker);
+  const relativeTrainerPath = index >= 0
+    ? normalized.slice(index + 1)
+    : normalized.startsWith("trainer/")
+      ? normalized
+      : null;
+  if (!relativeTrainerPath) return null;
+
+  candidate = resolve(process.cwd(), relativeTrainerPath);
+  return pathInside(trainerRoot, candidate) ? candidate : null;
+}
+
+function commonDatasetSystemPrompt(datasetPath: string): string | null {
+  const resolvedDataset = currentDatasetPath(datasetPath);
+  if (!resolvedDataset) return null;
 
   try {
     const prompts = new Set<string>();
@@ -102,7 +123,10 @@ function adapterSystemPrompt(model: string): string | null {
 }
 
 export function terrariaScopeMessages(messages: ChatMessage[]): ChatMessage[] {
-  const conversation = messages.slice(-MAX_SCOPE_HISTORY_ITEMS).map((message) => ({
+  const recentMessages = messages[0]?.role === "system"
+    ? [messages[0], ...messages.slice(1).slice(-(MAX_SCOPE_HISTORY_ITEMS - 1))]
+    : messages.slice(-MAX_SCOPE_HISTORY_ITEMS);
+  const conversation = recentMessages.map((message) => ({
     role: message.role,
     content: message.content.slice(0, MAX_SCOPE_MESSAGE_CHARS),
   }));
