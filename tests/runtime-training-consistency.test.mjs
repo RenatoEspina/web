@@ -10,6 +10,7 @@ const chatRoute = await read("app/api/chat/route.ts");
 const documentPrompt = await read("lib/documents/prompt.ts");
 const commands = await read("comandos.fish");
 const trainScript = await read("scripts/train-adapter.sh");
+const trainer = await read("trainer/train.py");
 const verifyLora = await read("trainer/verify_lora.py");
 
 test("serving recupera el system prompt del dataset del adapter y no solo de Terraria", () => {
@@ -17,6 +18,13 @@ test("serving recupera el system prompt del dataset del adapter y no solo de Ter
   assert.match(masterPrompt, /commonDatasetSystemPrompt\(manifest\.dataset\)/);
   assert.match(masterPrompt, /const prompt = adapterSystemPrompt\(model\)/);
   assert.match(masterPrompt, /currentDatasetPath/);
+});
+
+test("el entrenamiento persiste el system prompt común en el manifest", () => {
+  assert.match(trainer, /def common_system_prompt\(examples: list\[dict\]\)/);
+  assert.match(trainer, /"serving": \{/);
+  assert.match(trainer, /"systemPrompt": system_prompt/);
+  assert.match(trainer, /"systemPromptSource": "common_training_system"/);
 });
 
 test("scope Terraria coincide con el corpus unmodded y conserva contexto documental", () => {
