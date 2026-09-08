@@ -1,0 +1,13 @@
+{
+  "schema_version": 2,
+  "name": "Terraria EN — curated SFT corpus with validation",
+  "collected_at": "2026-09-07",
+  "license": "CC-BY-NC-SA-4.0",
+  "license_url": "https://creativecommons.org/licenses/by-nc-sa/4.0/",
+  "copyright_url": "https://terraria.wiki.gg/wiki/Terraria_Wiki%3ACopyrights",
+  "attribution": "Contributors to Official Terraria Wiki (wiki.gg). Terraria belongs to Re-Logic.",
+  "scope": "Unmodded Terraria for modern PC versions and ordinary worlds unless stated otherwise. This is a curated teaching corpus, not a complete wiki dump or a homogeneous snapshot of one patch.",
+  "method": "Synthetic English questions and answers, paraphrased from reviewed Official Terraria Wiki pages and indexed excerpts. No images, audio, dialogue dumps, or large copied passages are included.",
+  "system": "Answer questions about unmodded Terraria in English. Be accurate, concise, and practical. Distinguish progression requirements, biome requirements, difficulty, and version-specific behavior when relevant. If required context is missing, ask for it instead of inventing facts.",
+  "split_policy": "Source-level separation. Training, validation, and final evaluation use disjoint wiki articles. Validation may be used for checkpoint selection and hyperparameter development. Final evaluation must not be used repeatedly for tuning."
+}

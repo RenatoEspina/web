@@ -1,0 +1,194 @@
+[
+  {
+    "id": "plants",
+    "title": "Plants",
+    "url": "https://terraria.wiki.gg/wiki/Plants",
+    "split": "train",
+    "qa": [
+      ["How much maximum health does one Life Fruit add?", "5 maximum health, up to 500 after reaching 400 with Life Crystals."],
+      ["Where do Life Fruits grow in modern versions?", "In the Underground Jungle after at least one mechanical boss has been defeated."],
+      ["Does defeating more mechanical bosses increase the Life Fruit growth rate?", "No. More may appear as time passes, but defeating additional mechanical bosses does not increase the growth rate."],
+      ["What benefit do nearby Sunflowers provide?", "They provide the Happy! buff, which slightly improves movement and reduces enemy spawn rates."]
+    ]
+  },
+  {
+    "id": "underworld-guide",
+    "title": "Guide:Surviving in the Underworld",
+    "url": "https://terraria.wiki.gg/wiki/Guide%3ASurviving_in_the_Underworld",
+    "split": "train",
+    "qa": [
+      ["What extra danger occurs when mining Hellstone?", "Mining Hellstone releases Lava, so prepare lava protection before extracting large amounts."],
+      ["Which accessory prevents the Burning debuff from touching Hellstone blocks?", "The Obsidian Skull protects against contact with hot blocks such as Hellstone. This is not the same as general Lava immunity."],
+      ["Which potion is especially useful for mining Hellstone around Lava?", "Obsidian Skin Potion."],
+      ["What mobility tools are useful while exploring the Underworld?", "A good Hook and mobility accessories such as Cloud in a Bottle or Rocket Boots help cross large Lava lakes and uneven terrain."]
+    ]
+  },
+  {
+    "id": "practical-mobility",
+    "title": "Guide:Practical tips",
+    "url": "https://terraria.wiki.gg/wiki/Guide%3APractical_tips",
+    "split": "train",
+    "qa": [
+      ["What simple accessory gives an extra jump?", "Cloud in a Bottle and its variants provide an additional jump."],
+      ["Why is a Gravitation Potion useful for exploring the sky?", "It lets you reverse gravity, making it easier to search for Floating Islands."],
+      ["Where do the Magic Conch and Demon Conch teleport the player?", "Magic Conch teleports to an Ocean, while Demon Conch teleports to the Underworld."],
+      ["What is the main limitation of Minecarts for transportation?", "They require Minecart Tracks, so their route is limited to the track network you have built or found."]
+    ]
+  },
+  {
+    "id": "lihzahrd-power-cell",
+    "title": "Lihzahrd Power Cell",
+    "url": "https://terraria.wiki.gg/wiki/Lihzahrd_Power_Cell",
+    "split": "train",
+    "qa": [
+      ["How do I summon Golem with a Lihzahrd Power Cell?", "Activate the Lihzahrd Altar while a Power Cell is in your inventory, in a Hardmode world where Plantera has been defeated."],
+      ["How many Lihzahrd Power Cells does each Golem summon consume?", "One Power Cell per summon."],
+      ["Where can I get a guaranteed Lihzahrd Power Cell?", "Each Lihzahrd Chest contains one."],
+      ["Which enemies can drop Lihzahrd Power Cells?", "Lihzahrds and Flying Snakes in the Jungle Temple can drop them."]
+    ]
+  },
+  {
+    "id": "celestial-sigil",
+    "title": "Celestial Sigil",
+    "url": "https://terraria.wiki.gg/wiki/Celestial_Sigil",
+    "split": "train",
+    "qa": [
+      ["Which boss is summoned by the Celestial Sigil?", "Moon Lord, after a short countdown rather than instantly."],
+      ["What is the modern Celestial Sigil recipe?", "12 Solar Fragments, 12 Vortex Fragments, 12 Nebula Fragments, and 12 Stardust Fragments at an Ancient Manipulator."],
+      ["Can I use a Celestial Sigil while another boss is alive?", "No. One restriction is that no boss can currently be alive, in addition to its other progression requirements."],
+      ["Do I need to wait for night or use a particular biome to activate the Celestial Sigil?", "No. It can be used at any time and in any biome if the other requirements are met."]
+    ]
+  },
+  {
+    "id": "goblin-army",
+    "title": "Goblin Army",
+    "url": "https://terraria.wiki.gg/wiki/Goblin_Army",
+    "split": "train",
+    "qa": [
+      ["Which NPC becomes available after a Goblin Army has been defeated?", "The Goblin Tinkerer can then be found and rescued; he provides reforging and sells items such as the Tinkerer's Workshop and Rocket Boots."],
+      ["Why are Goblin Peons dangerous to a base with closed doors?", "They can break closed Doors, potentially invalidating housing or exposing the base."],
+      ["Can Goblin Peons break Doors that are already open?", "No. An open Door cannot be broken by them, although leaving it open does not keep enemies out."],
+      ["Why can Spiky Balls be useful during a Goblin Army?", "Many Goblins move along the ground toward the player and take repeated damage while crossing placed Spiky Balls."]
+    ]
+  },
+  {
+    "id": "modifiers",
+    "title": "Modifiers",
+    "url": "https://terraria.wiki.gg/wiki/Modifiers",
+    "split": "train",
+    "qa": [
+      ["What does reforging at the Goblin Tinkerer do?", "It assigns a new random modifier to a compatible item in exchange for coins."],
+      ["Does reforging guarantee that I keep or improve the current modifier?", "No. The existing modifier is replaced by a new random one, which can be better or worse."],
+      ["Can reforging leave a compatible item with no modifier?", "No. Reforging assigns a modifier to the item."],
+      ["Which items can reduce reforging cost by 20 percent?", "The Discount Card or its upgrade, the Greedy Ring. The Goblin Tinkerer's happiness also affects prices."]
+    ]
+  },
+  {
+    "id": "moon-lord",
+    "title": "Moon Lord",
+    "url": "https://terraria.wiki.gg/wiki/Moon_Lord",
+    "split": "train",
+    "qa": [
+      ["How does Moon Lord appear after the Lunar Events?", "After all four Celestial Pillars are destroyed, Moon Lord appears after the event's countdown."],
+      ["What is the final target that must be destroyed to defeat Moon Lord?", "The exposed core in his chest. It becomes vulnerable after the eyes in his hands and forehead are defeated."],
+      ["How long does Moon Lord take to appear after all four Celestial Pillars are destroyed?", "60 seconds."],
+      ["How long does Moon Lord take to appear after using a Celestial Sigil in modern versions?", "12 seconds, shorter than the post-Lunar Events countdown."]
+    ]
+  },
+  {
+    "id": "pylons",
+    "title": "Pylons",
+    "url": "https://terraria.wiki.gg/wiki/Pylons",
+    "split": "train",
+    "qa": [
+      ["What is the purpose of Pylons?", "They form a teleportation network that lets the player travel between placed Pylons when their requirements are satisfied."],
+      ["How many housed NPCs are normally required near each endpoint Pylon for the network to work?", "At least two housed NPCs must be close enough to each Pylon, except for the Universal Pylon's special rules."],
+      ["Can I place multiple copies of the same Pylon type in one world?", "No. Only one Pylon of each type can be placed in a world."],
+      ["Does a biome Pylon work if it is placed outside its matching biome?", "No. Normal biome Pylons must be in their respective biome to function."]
+    ]
+  },
+  {
+    "id": "fishing",
+    "title": "Fishing",
+    "url": "https://terraria.wiki.gg/wiki/Fishing",
+    "split": "train",
+    "qa": [
+      ["Are Angler fishing quests required for normal game progression?", "No. Fishing is not strictly required for progression, although its rewards and resources can be very useful."],
+      ["When does the Angler's daily fishing quest change?", "At dawn, 4:30 AM in game time."],
+      ["Can I catch the current quest fish if I already have one of that same quest fish in my inventory?", "No. Store or drop the existing quest fish first if you want to catch another one."],
+      ["What can fishing crates provide besides fish?", "They can provide ores, coins, chest items, and other resources, making fishing an alternative source for several materials."]
+    ]
+  },
+  {
+    "id": "tinkerers-workshop",
+    "title": "Tinkerer's Workshop",
+    "url": "https://terraria.wiki.gg/wiki/Tinkerer%27s_Workshop",
+    "split": "train",
+    "qa": [
+      ["What is the main use of the Tinkerer's Workshop?", "It combines compatible accessories into upgraded accessories that preserve or extend the effects of their components."],
+      ["Which NPC sells the Tinkerer's Workshop?", "The Goblin Tinkerer."],
+      ["How much does the Tinkerer's Workshop cost from the Goblin Tinkerer?", "10 Gold Coins before price modifiers from NPC happiness."],
+      ["Give an example of an accessory combination made at the Tinkerer's Workshop.", "Rocket Boots and Hermes Boots can be combined into Spectre Boots."]
+    ]
+  },
+  {
+    "id": "hellforge",
+    "title": "Hellforge",
+    "url": "https://terraria.wiki.gg/wiki/Hellforge",
+    "split": "train",
+    "qa": [
+      ["What can a Hellforge do that a normal Furnace cannot?", "It can smelt Hellstone into Hellstone Bars while also performing normal Furnace recipes."],
+      ["Can I craft a Hellforge from raw materials?", "No. It is normally found in Ruined Houses in the Underworld or obtained from certain crates."],
+      ["What is needed to craft one Hellstone Bar?", "3 Hellstone and 1 Obsidian at a Hellforge."],
+      ["Why is the Hellforge still useful after entering Hardmode?", "It is an ingredient in the Adamantite Forge or Titanium Forge, which are upgraded Hardmode crafting stations."]
+    ]
+  },
+  {
+    "id": "accessories",
+    "title": "Accessories",
+    "url": "https://terraria.wiki.gg/wiki/Accessories",
+    "split": "train",
+    "qa": [
+      ["How many functional accessory slots are available in a Classic Mode world by default?", "Five."],
+      ["What does consuming a Demon Heart unlock?", "An additional functional accessory slot usable in Expert and Master Mode worlds."],
+      ["Can two identical accessories be equipped at the same time?", "No. Duplicate accessories cannot normally be equipped simultaneously."],
+      ["Do informational accessories always need to be equipped in a functional slot to work?", "No. Some informational accessories function while simply carried in the inventory."]
+    ]
+  },
+  {
+    "id": "anvils",
+    "title": "Anvil",
+    "url": "https://terraria.wiki.gg/wiki/Anvil",
+    "split": "train",
+    "qa": [
+      ["What are Iron and Lead Anvils mainly used for?", "They are pre-Hardmode crafting stations used to turn metal bars into tools, weapons, armor, and other items."],
+      ["Are Iron Anvils and Lead Anvils functionally different?", "No. They provide the same crafting functions."],
+      ["Which anvils replace Iron or Lead Anvils for advanced Hardmode recipes?", "Mythril Anvil or Orichalcum Anvil."],
+      ["How many Iron Bars or Lead Bars are needed to craft the matching pre-Hardmode Anvil?", "5 bars at a Work Bench."]
+    ]
+  },
+  {
+    "id": "obsidian-skin-potion",
+    "title": "Obsidian Skin Potion",
+    "url": "https://terraria.wiki.gg/wiki/Obsidian_Skin_Potion",
+    "split": "train",
+    "qa": [
+      ["What protection does an Obsidian Skin Potion provide?", "It grants temporary immunity to Lava and also protects against the On Fire! and relevant hot-block Burning effects for its duration."],
+      ["How long does the Obsidian Skin buff last in modern versions?", "6 minutes unless it is canceled early."],
+      ["What ingredients craft an Obsidian Skin Potion?", "Bottled Water, Fireblossom, Waterleaf, and Obsidian at a compatible potion crafting station."],
+      ["Why is Obsidian Skin Potion useful before mining large amounts of Hellstone?", "Hellstone releases Lava when mined and often occurs around Lava, so temporary Lava immunity makes extraction much safer."]
+    ]
+  },
+  {
+    "id": "wings",
+    "title": "Wings",
+    "url": "https://terraria.wiki.gg/wiki/Wings",
+    "split": "train",
+    "qa": [
+      ["What do Wings generally provide when equipped?", "Controlled flight, improved mid-air movement, slow-fall behavior after flight time is exhausted, and immunity to fall damage."],
+      ["Can I equip more than one pair of Wings at once?", "No. Only one set of Wings can be equipped at a time."],
+      ["When does Wing flight time reset?", "It resets when the player stands on a surface, climbs, or hooks onto a tile."],
+      ["Which crafting station is used for craftable Wings?", "A Mythril Anvil or Orichalcum Anvil."]
+    ]
+  }
+]

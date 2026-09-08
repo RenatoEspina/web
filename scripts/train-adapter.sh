@@ -10,6 +10,18 @@ dataset=$1
 adapter_name=$2
 shift 2
 
+# Los datasets Terraria JSONL son artefactos generados a partir del corpus fuente
+# curado. Si aún no existen (por ejemplo tras un clone limpio), materialízalos
+# antes de validar el path solicitado.
+if [[ ! -f "$dataset" && "$dataset" == *"terraria-training.jsonl" ]]; then
+  python_builder=$(command -v python3 || command -v python || true)
+  if [[ -z "$python_builder" ]]; then
+    echo "No existe '$dataset' y no se encontró Python para reconstruir el corpus Terraria." >&2
+    exit 1
+  fi
+  "$python_builder" trainer/corpora/terraria/build.py
+fi
+
 if [[ ! -f "$dataset" ]]; then
   echo "No existe el dataset '$dataset'." >&2
   exit 1
@@ -41,6 +53,33 @@ fi
 
 "$trainer_python" trainer/validate_dataset.py "$dataset"
 
+extra_args=("$@")
+has_validation=false
+for arg in "${extra_args[@]}"; do
+  if [[ "$arg" == "--validation-dataset" || "$arg" == --validation-dataset=* ]]; then
+    has_validation=true
+    break
+  fi
+done
+
+if [[ "$has_validation" == false ]]; then
+  validation_dataset=""
+  if [[ "$dataset" == *"terraria-training.jsonl" ]]; then
+    validation_dataset="trainer/corpora/terraria/validation.jsonl"
+  elif [[ "$dataset" == *-training.jsonl ]]; then
+    sibling_validation="${dataset%-training.jsonl}-validation.jsonl"
+    if [[ -f "$sibling_validation" ]]; then
+      validation_dataset="$sibling_validation"
+    fi
+  fi
+
+  if [[ -n "$validation_dataset" && -f "$validation_dataset" ]]; then
+    echo "== Validación separada detectada: $validation_dataset =="
+    "$trainer_python" trainer/validate_dataset.py "$validation_dataset"
+    extra_args+=("--validation-dataset" "$validation_dataset")
+  fi
+fi
+
 # El CLI de Fish usa este nombre de proyecto explícitamente. Mantenerlo aquí
 # evita que `docker compose ps` consulte otro proyecto y deje vLLM ocupando la
 # GPU durante el entrenamiento. Se puede sobrescribir para instalaciones
@@ -68,4 +107,4 @@ restart_vllm() {
 }
 trap restart_vllm EXIT
 
-"$trainer_python" trainer/train.py --dataset "$dataset" --name "$adapter_name" "$@"
+"$trainer_python" trainer/train.py --dataset "$dataset" --name "$adapter_name" "${extra_args[@]}"

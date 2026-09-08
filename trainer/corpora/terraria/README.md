@@ -1,74 +1,102 @@
-# Terraria ES: corpus inicial para SFT
+# Terraria EN: curated SFT corpus
 
-96 ejemplos de entrenamiento y 16 de evaluación, en español, a partir de
-28 artículos de [Official Terraria Wiki](https://terraria.wiki.gg/).
-Es una **base de datos JSON/JSONL curada**, no un volcado de toda la wiki ni
-un modelo experto. Las respuestas son sintéticas y parafraseadas; no son
-respuestas oficiales escritas por los autores de la wiki.
+English Terraria corpus for experimenting with QLoRA/SFT. The canonical source
+contains **200 conversations from 50 Official Terraria Wiki articles**:
 
-## Archivos
+- **160 training conversations** from 40 source articles;
+- **24 validation conversations** from 6 different source articles;
+- **16 final-evaluation conversations** from 4 additional source articles.
 
-- `curated.json`: base editable, con preguntas, respuestas, fuentes y partición.
-- `../../examples/terraria-training.jsonl`: SFT compatible con la GUI; aparece
-  automáticamente en **Dataset → Ejemplo · terraria-training.jsonl**.
-- `evaluation.jsonl`: preguntas reservadas, referencias y comprobaciones básicas.
-  Está fuera de las carpetas seleccionables de SFT. No lo subas para entrenar.
-- `build.py`: reconstruye ambos JSONL sin red. `--check` verifica reproducibilidad.
+The split is performed by source article, not by randomly moving individual
+questions. This avoids evaluating on paraphrases of the same article that the
+model already saw during training.
 
-Cada ejemplo conserva URL, historial de contribuciones, fecha de consulta,
-licencia y atribución. La consulta directa de la wiki respondió HTTP 403;
-se utilizaron extractos indexados de las páginas oficiales accesibles en el
-buscador, sin eludir el bloqueo. **2026-09-07 es la fecha de consulta del índice,
-no una revisión fija de la wiki.** Esto limita su actualidad y reproducibilidad
-externa. `curated.json` sí permite reproducir exactamente los archivos entregados.
+## Files
 
-## Alcance y calidad
+The versioned, editable source of truth is under `data/`:
 
-Terraria vanilla para PC moderno y mundos normales, salvo indicación expresa:
-inicio, vida/maná, fabricación, NPC, casas, movilidad y progresión de jefes.
-No incluye mods, una tabla completa de objetos/recetas, todas las semillas
-especiales ni todas las diferencias entre parches/plataformas.
+- `data/metadata.json`: scope, system prompt, attribution and split policy;
+- `data/sources-train-core.json`: translated core training topics;
+- `data/sources-train-extra.json`: additional English training topics;
+- `data/sources-train-more.json`: further NPC/progression/material topics;
+- `data/sources-validation.json`: development/validation topics;
+- `data/sources-evaluation.json`: final held-out topics.
 
-La separación es por artículo/tema: Suspicious Looking Eye, Queen Bee,
-Duke Fishron y The Aether quedan exclusivamente en evaluación. Esto comprueba
-comportamiento en temas no entrenados y posible regresión del conocimiento base;
-**no demuestra que el LoRA haya memorizado nuevos hechos de esos temas**.
-Con 16 casos, el resultado es exploratorio, no una métrica robusta.
+`build.py` materializes the JSONL files locally:
 
-`contains` en el evaluador es un smoke test léxico: puede aprobar una respuesta
-contradictoria o suspender una paráfrasis correcta. Revisa las respuestas completas
-contra `reference_answer` y su fuente. No ajustes repetidamente hiperparámetros
-mirando este conjunto final; para experimentar, crea otro conjunto de desarrollo.
+- `../../examples/terraria-training.jsonl`: selectable SFT training dataset;
+- `validation.jsonl`: assistant-target validation set used for checkpoint
+  selection; it is intentionally outside the GUI's selectable SFT folders;
+- `evaluation.jsonl`: final held-out evaluation without assistant targets.
 
-Para un asistente que consulte toda la wiki y cite información actualizada,
-usa RAG con contenido obtenido y reutilizado conforme a sus condiciones.
-Este SFT pequeño sirve para experimentar con el estilo y el dominio; no garantiza
-precisión factual ni sustituye una base de conocimiento consultable.
+These JSONL files are generated artifacts and are gitignored. Opening
+`./fine-tune-gui` rebuilds them automatically from the versioned English corpus.
 
-## Licencia y atribución
+## Why validation was added
 
-Corpus derivado de los colaboradores de Official Terraria Wiki (wiki.gg).
-Terraria y sus materiales pertenecen a Re-Logic. Cambios realizados: selección
-de hechos, traducción/paráfrasis al español, redacción de preguntas y separación
-de evaluación. No se incluyen imágenes, audio ni diálogos del juego.
+The previous training loop only reported training-side metrics such as loss,
+mean token accuracy, entropy and gradient norm. Those are useful diagnostics but
+cannot tell whether a later checkpoint generalizes better: they are measured on
+examples the optimizer already sees.
 
-Los textos que la wiki puede licenciar están bajo
-[CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/), según su
-[página de copyright](https://terraria.wiki.gg/wiki/Terraria_Wiki%3ACopyrights).
-Este corpus se distribuye bajo esa misma licencia: conserva atribución, enlaces,
-indicación de cambios, uso no comercial y compartir igual. **No lo trates como
-datos MIT aunque el código del proyecto tenga otra licencia.** Antes de distribuir
-un modelo entrenado o usarlo comercialmente, revisa las condiciones de la wiki y
-del modelo base; este repositorio no garantiza que ese uso esté autorizado.
+When `terraria-training.jsonl` is trained through the normal script, its separate
+`validation.jsonl` is detected automatically. `trainer/train.py` then evaluates
+once before training and once per epoch, selects the checkpoint with the **lowest
+`eval_loss`**, reloads that checkpoint and saves it as the final adapter.
 
-## Entrenar
+The manifest records:
 
-Consulta [la guía paso a paso](../../../docs/TERRARIA_FINE_TUNING.md).
+- baseline validation loss and perplexity;
+- selected validation loss and perplexity;
+- best checkpoint and best metric;
+- relative validation-loss improvement.
 
-Reconstrucción opcional, desde la raíz del repositorio:
+Perplexity is `exp(eval_loss)` and is included as an easier-to-read transform of
+the same token-level objective. The primary selection criterion remains
+`eval_loss`: lower is better.
+
+The **16 final evaluation questions are not used for checkpoint selection**. Do
+not repeatedly tune against them; they are intended as a final regression and
+generalization check.
+
+## Scope and data quality
+
+The corpus covers unmodded Terraria on modern PC versions and ordinary worlds
+unless a question says otherwise. Topics include early progression, health and
+mana, crafting, housing, NPCs, mobility, Hardmode, bosses, fishing, pylons,
+accessories, the Jungle Temple, Meteorite and several crafting/progression
+systems.
+
+Questions and answers are synthetic English paraphrases based on reviewed
+Official Terraria Wiki pages or indexed excerpts. This is not a complete wiki
+dump, a frozen snapshot of one patch, or a substitute for RAG when current,
+source-cited factual coverage is required.
+
+Moving the experimental corpus to English reduces the mixed-language burden for
+the base model and makes the training/evaluation language consistent. It does
+not by itself guarantee higher quality; that is why the validation split and
+final held-out evaluation remain necessary.
+
+## Rebuild and validate
+
+From the repository root:
 
 ```bash
 python trainer/corpora/terraria/build.py
 python trainer/corpora/terraria/build.py --check
 python trainer/validate_dataset.py trainer/examples/terraria-training.jsonl
+python trainer/validate_dataset.py trainer/corpora/terraria/validation.jsonl
 ```
+
+## License and attribution
+
+The corpus is derived from contributors to Official Terraria Wiki (wiki.gg).
+Terraria and its materials belong to Re-Logic. Changes include selection of
+facts, English paraphrasing, question authoring and source-level splitting.
+Images, audio and game-dialogue dumps are not included.
+
+Wiki-derived text is handled under **CC BY-NC-SA 4.0**, following the wiki's
+copyright page. Keep attribution, links and share-alike/non-commercial terms
+when redistributing the dataset. The surrounding project license does not turn
+this corpus into MIT-licensed data. Review both the wiki terms and the base-model
+license before distributing trained weights or using them commercially.
