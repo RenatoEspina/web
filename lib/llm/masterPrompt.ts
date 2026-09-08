@@ -1,6 +1,6 @@
 import type { ChatMessage } from "./types";
 
-const TERRARIA_MODEL_PATTERN = /(^|[._/\-])terraria([._/\-]|$)/i;
+const TERRARIA_MODEL_PATTERN = /(^|[._\/-])terraria([._\/-]|$)/i;
 
 export const TERRARIA_MASTER_PROMPT = [
   "You are the Terraria specialist for this application.",
