@@ -7,7 +7,22 @@ import json
 from pathlib import Path
 
 DIRECTORY = Path(__file__).resolve().parent
+DATA_DIR = DIRECTORY / "data"
 TRAINER = DIRECTORY.parents[1]
+SOURCE_GLOB = "sources-*.json"
+
+
+def load_corpus() -> dict:
+    metadata = json.loads((DATA_DIR / "metadata.json").read_text(encoding="utf-8"))
+    sources: list[dict] = []
+    for path in sorted(DATA_DIR.glob(SOURCE_GLOB)):
+        value = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(value, list):
+            raise ValueError(f"{path.name} must contain a JSON array")
+        sources.extend(value)
+    if not sources:
+        raise ValueError("The Terraria corpus contains no source shards")
+    return {**metadata, "sources": sources}
 
 
 def render(corpus: dict) -> tuple[str, str, str]:
@@ -72,12 +87,8 @@ def render(corpus: dict) -> tuple[str, str, str]:
     return encode(splits["train"]), encode(splits["validation"]), encode(splits["evaluation"])
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--check", action="store_true", help="Verify committed outputs without writing")
-    args = parser.parse_args()
-
-    corpus = json.loads((DIRECTORY / "curated.json").read_text(encoding="utf-8"))
+def materialize() -> dict[str, int]:
+    corpus = load_corpus()
     training, validation, evaluation = render(corpus)
     outputs = {
         TRAINER / "examples" / "terraria-training.jsonl": training,
@@ -85,20 +96,33 @@ def main() -> None:
         DIRECTORY / "evaluation.jsonl": evaluation,
     }
     for path, content in outputs.items():
-        if args.check:
-            if not path.is_file() or path.read_text(encoding="utf-8") != content:
-                raise SystemExit(f"Out of date: {path}. Run trainer/corpora/terraria/build.py")
-        else:
-            path.parent.mkdir(parents=True, exist_ok=True)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if not path.exists() or path.read_text(encoding="utf-8") != content:
             path.write_text(content, encoding="utf-8")
-
-    print(json.dumps({
+    return {
         "training": len(training.splitlines()),
         "validation": len(validation.splitlines()),
         "evaluation": len(evaluation.splitlines()),
         "sources": len(corpus["sources"]),
-        "verified": args.check,
-    }))
+    }
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--check", action="store_true", help="Validate the source corpus without writing JSONL files")
+    args = parser.parse_args()
+
+    corpus = load_corpus()
+    training, validation, evaluation = render(corpus)
+    summary = {
+        "training": len(training.splitlines()),
+        "validation": len(validation.splitlines()),
+        "evaluation": len(evaluation.splitlines()),
+        "sources": len(corpus["sources"]),
+    }
+    if not args.check:
+        summary = materialize()
+    print(json.dumps({**summary, "verified": args.check}))
 
 
 if __name__ == "__main__":
