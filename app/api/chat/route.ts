@@ -3,7 +3,13 @@ import { withKnowledge } from "@/lib/documents/prompt";
 import { errorResponse, isAuthorized, workspaceIdFrom } from "@/lib/http/request";
 import { complete } from "@/lib/llm";
 import { getAllowedModels, getLlmConfig } from "@/lib/llm/config";
-import { withMasterPrompt } from "@/lib/llm/masterPrompt";
+import {
+  TERRARIA_OUT_OF_SCOPE_MESSAGE,
+  isTerrariaModel,
+  parseTerrariaScopeDecision,
+  terrariaScopeMessages,
+  withMasterPrompt,
+} from "@/lib/llm/masterPrompt";
 import { RuntimeModelError, validateRuntimeModelSelection } from "@/lib/llm/runtime";
 import type { ChatMessage, ChatRole } from "@/lib/llm/types";
 
@@ -108,15 +114,59 @@ export async function POST(request: Request) {
   ];
 
   try {
+    const selectedModel = model || config.model;
+    const inferenceSignal = AbortSignal.timeout(config.timeoutMs);
+    let scope: {
+      checked: true;
+      allowed: boolean;
+      classifierModel: string;
+      latencyMs: number;
+    } | undefined;
+
+    if (isTerrariaModel(selectedModel)) {
+      const scopeCompletion = await complete(
+        terrariaScopeMessages(messages),
+        inferenceSignal,
+        config.model,
+      );
+      const allowed = parseTerrariaScopeDecision(scopeCompletion.content);
+      scope = {
+        checked: true,
+        allowed,
+        classifierModel: config.model,
+        latencyMs: scopeCompletion.latencyMs,
+      };
+
+      if (!allowed) {
+        return Response.json({
+          message: TERRARIA_OUT_OF_SCOPE_MESSAGE,
+          provider: config.provider,
+          model: selectedModel,
+          mode: "none" satisfies KnowledgeMode,
+          sources: [],
+          cacheHit: false,
+          embeddingUsed: false,
+          contextTruncated: false,
+          scope,
+          inference: {
+            latencyMs: 0,
+            finishReason: "scope_rejected",
+            promptTokens: 0,
+            completionTokens: 0,
+            totalTokens: 0,
+            tokensPerSecond: undefined,
+          },
+        });
+      }
+    }
+
+    await validateRuntimeModelSelection(config, selectedModel, inferenceSignal);
+
     const knowledge = mode === "none"
       ? null
       : await buildKnowledgeContext(workspaceId!, mode, message, selectedDocumentIds);
-    const selectedModel = model || config.model;
     const knowledgeMessages = knowledge ? withKnowledge(messages, knowledge) : messages;
     const requestMessages = withMasterPrompt(knowledgeMessages, selectedModel);
-    const inferenceSignal = AbortSignal.timeout(config.timeoutMs);
-
-    await validateRuntimeModelSelection(config, selectedModel, inferenceSignal);
     const completion = await complete(requestMessages, inferenceSignal, selectedModel);
     const effectiveMode: KnowledgeMode = knowledge?.mode ?? "none";
 
@@ -129,6 +179,7 @@ export async function POST(request: Request) {
       cacheHit: knowledge?.cacheHit ?? false,
       embeddingUsed: knowledge?.embeddingUsed ?? false,
       contextTruncated: knowledge?.truncated ?? false,
+      scope,
       inference: {
         latencyMs: completion.latencyMs,
         finishReason: completion.finishReason,
