@@ -33,12 +33,28 @@ test("chat reporta mode=none cuando no llegó a usar contexto documental", async
   process.env.LLM_BASE_URL = "http://127.0.0.1:8000";
   process.env.LLM_MODEL = "Qwen/Qwen3.5-0.8B";
   delete process.env.APP_TOKEN;
-  globalThis.fetch = async () => new Response(JSON.stringify({
-    choices: [{ message: { content: "Respuesta sin documentos" } }],
-  }), {
-    status: 200,
-    headers: { "Content-Type": "application/json" },
-  });
+  globalThis.fetch = async (input) => {
+    const url = typeof input === "string"
+      ? input
+      : input instanceof URL
+        ? input.toString()
+        : input.url;
+    if (url.endsWith("/v1/models")) {
+      return new Response(JSON.stringify({
+        data: [{ id: "Qwen/Qwen3.5-0.8B", root: "Qwen/Qwen3.5-0.8B", parent: null }],
+      }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    return new Response(JSON.stringify({
+      choices: [{ message: { content: "Respuesta sin documentos" }, finish_reason: "stop" }],
+      usage: { prompt_tokens: 4, completion_tokens: 3, total_tokens: 7 },
+    }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  };
 
   try {
     const { POST } = await vite.ssrLoadModule("/app/api/chat/route.ts");
@@ -60,6 +76,8 @@ test("chat reporta mode=none cuando no llegó a usar contexto documental", async
     assert.equal(body.mode, "none");
     assert.deepEqual(body.sources, []);
     assert.equal(body.embeddingUsed, false);
+    assert.equal(body.inference.completionTokens, 3);
+    assert.equal(body.inference.finishReason, "stop");
   } finally {
     globalThis.fetch = originalFetch;
     restoreEnv("LLM_PROVIDER", previous.provider);
