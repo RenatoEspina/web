@@ -18,7 +18,7 @@ test("vLLM inicia antes del smoke test pesado de embeddings", () => {
   assert.ok(vllmUp > prepare);
   assert.ok(vllmReady > vllmUp);
   assert.ok(verify > vllmReady);
-  assert.match(commands, /ollama show \"\$model\"/);
+  assert.match(commands, /ollama show "\$model"/);
   assert.match(commands, /--max-time 180/);
 });
 
