@@ -19,6 +19,8 @@ const MAX_MESSAGE_CHARS = 12_000;
 const MAX_HISTORY_ITEMS = 20;
 const MAX_HISTORY_CHARS = 8_000;
 const MAX_KNOWLEDGE_HISTORY_CHARS = 4_000;
+const SCOPE_TIMEOUT_MS = 15_000;
+const RUNTIME_VALIDATION_TIMEOUT_MS = 10_000;
 
 function isRole(value: unknown): value is Exclude<ChatRole, "system"> {
   return value === "user" || value === "assistant";
@@ -115,7 +117,18 @@ export async function POST(request: Request) {
 
   try {
     const selectedModel = model || config.model;
-    const inferenceSignal = AbortSignal.timeout(config.timeoutMs);
+
+    await validateRuntimeModelSelection(
+      config,
+      selectedModel,
+      AbortSignal.timeout(Math.min(config.timeoutMs, RUNTIME_VALIDATION_TIMEOUT_MS)),
+    );
+
+    const knowledge = mode === "none"
+      ? null
+      : await buildKnowledgeContext(workspaceId!, mode, message, selectedDocumentIds);
+    const knowledgeMessages = knowledge ? withKnowledge(messages, knowledge) : messages;
+
     let scope: {
       checked: true;
       allowed: boolean;
@@ -125,8 +138,8 @@ export async function POST(request: Request) {
 
     if (isTerrariaModel(selectedModel)) {
       const scopeCompletion = await complete(
-        terrariaScopeMessages(messages),
-        inferenceSignal,
+        terrariaScopeMessages(knowledgeMessages),
+        AbortSignal.timeout(Math.min(config.timeoutMs, SCOPE_TIMEOUT_MS)),
         config.model,
         {
           temperature: 0,
@@ -164,14 +177,12 @@ export async function POST(request: Request) {
       }
     }
 
-    await validateRuntimeModelSelection(config, selectedModel, inferenceSignal);
-
-    const knowledge = mode === "none"
-      ? null
-      : await buildKnowledgeContext(workspaceId!, mode, message, selectedDocumentIds);
-    const knowledgeMessages = knowledge ? withKnowledge(messages, knowledge) : messages;
     const requestMessages = withMasterPrompt(knowledgeMessages, selectedModel);
-    const completion = await complete(requestMessages, inferenceSignal, selectedModel);
+    const completion = await complete(
+      requestMessages,
+      AbortSignal.timeout(config.timeoutMs),
+      selectedModel,
+    );
     const effectiveMode: KnowledgeMode = knowledge?.mode ?? "none";
 
     return Response.json({
