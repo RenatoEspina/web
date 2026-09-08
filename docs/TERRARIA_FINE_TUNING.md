@@ -5,11 +5,12 @@
 El corpus de Terraria ahora está en **inglés** y separa tres conjuntos por
 artículo fuente:
 
-- **128 conversaciones de entrenamiento** (32 artículos);
+- **160 conversaciones de entrenamiento** (40 artículos);
 - **24 conversaciones de validación** (6 artículos distintos);
 - **16 conversaciones de evaluación final** (4 artículos adicionales).
 
-La GUI reconstruye automáticamente los JSONL locales desde
+En total son **200 conversaciones provenientes de 50 artículos fuente**. La GUI
+reconstruye automáticamente los JSONL locales desde
 `trainer/corpora/terraria/data/` al abrirse. Selecciona solamente
 **Ejemplo · terraria-training.jsonl**; el validation set se conecta
 automáticamente durante el entrenamiento y no aparece como un dataset SFT
@@ -45,7 +46,7 @@ No la uses repetidamente para escoger epochs, learning rate o rank.
 1. Actualiza la rama/revisión del proyecto y abre `./fine-tune-gui`.
 2. En **Entorno**, usa **Comprobar GPU** y prepara/actualiza el entorno si hace
    falta.
-3. En **Dataset**, selecciona **terraria-training.jsonl**. Debe mostrar 128
+3. En **Dataset**, selecciona **terraria-training.jsonl**. Debe mostrar 160
    conversaciones.
 4. Usa un nombre nuevo, por ejemplo `terraria-en-v2`, con modelo base
    `Qwen/Qwen3.5-0.8B`.
@@ -93,8 +94,8 @@ No la uses repetidamente para escoger epochs, learning rate o rank.
 9. Reinicia la web principal si estaba abierta para que relea la allowlist de
    adapters.
 
-Con 128 ejemplos, batch size 1 y gradient accumulation 8 hay aproximadamente
-**16 actualizaciones del optimizador por época**, unas 32 en dos épocas. Si la
+Con 160 ejemplos, batch size 1 y gradient accumulation 8 hay aproximadamente
+**20 actualizaciones del optimizador por época**, unas 40 en dos épocas. Si la
 segunda época baja train loss pero empeora validation loss, el trainer debería
 conservar el checkpoint de la primera.
 
@@ -134,8 +135,8 @@ Este experimento cambia deliberadamente dos cosas que podían limitar la calidad
 
 - **selección del checkpoint**: ahora existe una señal de generalización separada
   del entrenamiento;
-- **datos**: el corpus pasa de 96 ejemplos SFT en español a 128 en inglés, agrega
-  temas nuevos y añade un validation set de 24 ejemplos.
+- **datos**: el corpus pasa de 96 ejemplos SFT en español a **160 en inglés**, y
+  añade un validation set independiente de 24 ejemplos.
 
 Por ahora dejamos rank, alpha, dropout, learning rate, epochs y `all-linear`
 iguales. Si la calidad mejora, podremos atribuir buena parte del cambio al enfoque
@@ -145,7 +146,7 @@ learning rate o módulos LoRA) para evitar confundir causas.
 
 ## Corpus y licencia
 
-Consulta `trainer/corpora/terraria/README.md` para el detalle de las 42 fuentes,
+Consulta `trainer/corpora/terraria/README.md` para el detalle de las **50 fuentes**,
 particiones, alcance y condiciones **CC BY-NC-SA 4.0**. El corpus es una colección
 curada para experimentar; para cobertura amplia, actualizada y con fuentes, RAG
 sigue siendo la herramienta adecuada.
