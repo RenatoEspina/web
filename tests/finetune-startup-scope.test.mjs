@@ -53,6 +53,8 @@ test("Terraria usa el mismo system prompt en SFT y serving", () => {
   assert.match(masterPrompt, /TERRARIA_ADAPTER_SYSTEM_PROMPT = terrariaMetadata\.system/);
   assert.match(masterPrompt, /TERRARIA_MASTER_PROMPT = TERRARIA_ADAPTER_SYSTEM_PROMPT/);
   assert.match(masterPrompt, /content: TERRARIA_ADAPTER_SYSTEM_PROMPT/);
+  assert.match(masterPrompt, /first\?\.role === "system"/);
+  assert.match(masterPrompt, /TERRARIA_ADAPTER_SYSTEM_PROMPT.*first\.content/s);
 });
 
 test("los modelos Terraria mantienen filtro duro con clasificación determinista", () => {
@@ -63,7 +65,7 @@ test("los modelos Terraria mantienen filtro duro con clasificación determinista
   assert.match(masterPrompt, /TERRARIA_SCOPE_CLASSIFIER_PROMPT/);
   assert.match(masterPrompt, /Return exactly one label and nothing else: TERRARIA or OUTSIDE/);
   assert.match(masterPrompt, /parseTerrariaScopeDecision/);
-  assert.match(masterPrompt, /TERRARIA\["'`\]\*\[.!\]\?/);
+  assert.match(masterPrompt, /\.test\(content\)/);
 
   const classify = chatRoute.indexOf("terrariaScopeMessages(messages)");
   const reject = chatRoute.indexOf("scope_rejected", classify);
