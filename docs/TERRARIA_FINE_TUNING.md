@@ -1,79 +1,151 @@
 # Fine-tuning de Terraria desde la GUI local
 
-## Antes de empezar
+## Qué cambió en el experimento
 
-Actualiza el proyecto a la revisión que contiene esta guía y vuelve a abrir
-**LLM Bridge Fine-tuning** desde el menú de aplicaciones. Si nunca lo has abierto,
-ejecuta `./fine-tune-gui` una vez desde la raíz del proyecto.
+El corpus de Terraria ahora está en **inglés** y separa tres conjuntos por
+artículo fuente:
 
-No necesitas volver a entrenar `qwen-es-v1` para corregir su compatibilidad:
-si estaba cargado, pulsa **Descargar de vLLM**, vuelve a **Cargar en vLLM** y
-pulsa **Comprobar uso**. Si vLLM se reinició, basta con cargarlo y comprobarlo.
-La exportación de Qwen3.5 se prepara automáticamente conservando los originales.
+- **128 conversaciones de entrenamiento** (32 artículos);
+- **24 conversaciones de validación** (6 artículos distintos);
+- **16 conversaciones de evaluación final** (4 artículos adicionales).
 
-## Entrenar un adaptador nuevo
+La GUI reconstruye automáticamente los JSONL locales desde
+`trainer/corpora/terraria/data/` al abrirse. Selecciona solamente
+**Ejemplo · terraria-training.jsonl**; el validation set se conecta
+automáticamente durante el entrenamiento y no aparece como un dataset SFT
+seleccionable.
 
-1. **Entorno:** pulsa **Comprobar GPU**. Si el entorno falta o está desactualizado,
-   usa **Preparar / actualizar entorno**. Debe terminar con CUDA y NF4 correctos.
-2. **Dataset:** selecciona **Ejemplo · terraria-training.jsonl**. Ya está incluido;
-   no hace falta descargar ni subir archivos. Contiene 96 conversaciones válidas.
-3. **Entrenamiento:** utiliza un nombre nuevo, por ejemplo `terraria-es-v1`, y
-   el modelo base `Qwen/Qwen3.5-0.8B`. No uses `qwen-es-v1` como modelo base ni
-   reutilices su nombre: ambos adaptadores deben conservarse separados.
-4. Como **punto de partida experimental** para la RTX 3060 Laptop de 6 GB:
+## Por qué ya no usamos solo train_loss
+
+Las métricas que aparecen durante SFT (`loss`, `mean_token_accuracy`, `entropy`,
+`grad_norm`) se calculan sobre los ejemplos que el optimizador está viendo. Sirven
+para detectar inestabilidad o si el modelo está aprendiendo, pero una mejora en
+ellas no demuestra que el checkpoint generalice mejor.
+
+Cuando existe validation set, el trainer ahora:
+
+1. calcula una validación base antes de actualizar el LoRA;
+2. calcula `eval_loss` al final de cada época;
+3. guarda checkpoints por época;
+4. selecciona el checkpoint con **menor `eval_loss`**;
+5. recarga ese checkpoint antes de guardar el adapter final;
+6. registra `eval_loss`, perplexity, checkpoint seleccionado y mejora relativa en
+   `manifest.json -> qualitySelection`.
+
+La perplexity es una transformación de la misma pérdida (`exp(loss)`), así que
+sirve para lectura/comparación pero no es una métrica independiente que haya que
+maximizar. Para esta fase experimental usamos **mínimo validation/eval loss** como
+criterio objetivo de selección.
+
+La evaluación final de 16 preguntas permanece completamente fuera de ese proceso.
+No la uses repetidamente para escoger epochs, learning rate o rank.
+
+## Entrenar un adapter nuevo
+
+1. Actualiza la rama/revisión del proyecto y abre `./fine-tune-gui`.
+2. En **Entorno**, usa **Comprobar GPU** y prepara/actualiza el entorno si hace
+   falta.
+3. En **Dataset**, selecciona **terraria-training.jsonl**. Debe mostrar 128
+   conversaciones.
+4. Usa un nombre nuevo, por ejemplo `terraria-en-v2`, con modelo base
+   `Qwen/Qwen3.5-0.8B`.
+5. Como punto de partida conserva, para aislar el efecto del dataset/validación:
    rank **16**, alpha **32**, dropout **0.05**, **2 épocas**, learning rate
    **0.0001**, batch size **1**, gradient accumulation **8**, max length **1024**,
-   seed **42**. No son hiperparámetros optimizados. Con 96 ejemplos, son unas
-   24 actualizaciones del optimizador. Más épocas no garantizan mejor calidad.
-5. Pulsa **Preparar y entrenar**. El flujo detiene vLLM durante el entrenamiento
-   para liberar VRAM y lo restaura si estaba activo. No ejecutes otro entrenamiento
-   o programa intensivo en GPU a la vez. El HF token solo hace falta si el acceso
-   al modelo lo requiere o quieres autenticar la descarga; no acelera el cálculo.
-6. Si aparece un error de memoria, revisa otros procesos de GPU y prueba
-   max length **512** con un **nombre nuevo**. No borres un adaptador terminado
-   para reutilizar su nombre. Revisa la terminal integrada antes de reintentar.
-7. **vLLM:** inicia el **mismo modelo base** si no quedó activo.
-8. **Adaptadores:** carga `terraria-es-v1` y pulsa **Comprobar uso**. El resultado
-   debe indicar efecto detectado; si es inconcluso, no asumas que esté aplicado.
-9. Reinicia la web principal si estaba abierta para que relea `LLM_ADAPTER_MODELS`.
-   Abre una conversación nueva y elige **terraria-es-v1** en **Modelo o adaptador**.
-   Cargar un LoRA no lo selecciona automáticamente. El nombre superior ahora refleja
-   la selección; no es una certificación de calidad.
+   seed **42**.
+6. Pulsa **Preparar y entrenar**. El script detectará automáticamente:
 
-## Comprobar aprendizaje, no solo carga
+   ```text
+   trainer/corpora/terraria/validation.jsonl
+   ```
 
-La GUI distingue entre cargar el adaptador y detectar un cambio en la inferencia.
-**Comprobar uso** compara las probabilidades del siguiente token en tres prompts
-con una repetición del modelo base para controlar ruido numérico. Puede detectar
-un LoRA aunque el texto final coincida. No confirma que cada tensor se utilice ni
-que el adaptador sea mejor; una prueba inconclusa tampoco prueba ausencia absoluta
-de efecto.
+   y el log debe mostrar `Validación antes del entrenamiento` y evaluaciones por
+   época.
+7. Al finalizar revisa:
 
-En el chat, compara el modelo base y `terraria-es-v1` usando conversaciones nuevas,
-el mismo prompt y sin documentos/RAG/CAG. Por ejemplo, pregunta la diferencia entre
-un Magic Mirror y una Recall Potion. No reutilices el historial de la otra prueba.
+   ```bash
+   jq '.qualitySelection' adapters/terraria-en-v2/manifest.json
+   ```
 
-Para una evaluación reproducible (opcional, desde la raíz del repositorio):
+   Un resultado típico tendrá esta forma:
+
+   ```json
+   {
+     "metric": "eval_loss",
+     "direction": "minimize",
+     "bestCheckpoint": "checkpoint-...",
+     "bestMetric": 1.8,
+     "baseline": {
+       "baseline_loss": 2.7,
+       "baseline_perplexity": 14.9
+     },
+     "selected": {
+       "validation_loss": 1.8,
+       "validation_perplexity": 6.0
+     },
+     "relativeLossImprovement": 0.33
+   }
+   ```
+
+   Los números anteriores son solo un ejemplo de estructura; usa los valores
+   reales de tu entrenamiento.
+8. Inicia vLLM con el mismo modelo base, carga el adapter y usa **Comprobar uso**.
+9. Reinicia la web principal si estaba abierta para que relea la allowlist de
+   adapters.
+
+Con 128 ejemplos, batch size 1 y gradient accumulation 8 hay aproximadamente
+**16 actualizaciones del optimizador por época**, unas 32 en dos épocas. Si la
+segunda época baja train loss pero empeora validation loss, el trainer debería
+conservar el checkpoint de la primera.
+
+## Evaluación final Base vs LoRA
+
+Después de cargar el adapter, genera el corpus final si todavía no existe:
 
 ```bash
-python trainer/evaluate.py --dataset trainer/corpora/terraria/evaluation.jsonl --model Qwen/Qwen3.5-0.8B --output outputs/terraria-base.json
-python trainer/evaluate.py --dataset trainer/corpora/terraria/evaluation.jsonl --model terraria-es-v1 --output outputs/terraria-lora.json
+python trainer/corpora/terraria/build.py
 ```
 
-Ambas ejecuciones deben usar el mismo vLLM, plantilla y configuración de generación.
-Compara respuestas completas, no solo `passRate`: la comprobación por palabras
-puede dar falsos positivos y negativos. La evaluación tiene 16 casos de temas
-reservados, no entrenados; úsala como comprobación exploratoria de generalización
-y regresiones, no como prueba de que el modelo conoce toda la wiki.
+Luego ejecuta exactamente el mismo conjunto con ambos modelos:
 
-El corpus aún es pequeño para aprender Terraria en profundidad. Amplíalo con hechos
-verificados, respuestas variadas y una partición de desarrollo independiente.
-Para consultar toda la wiki con fuentes actuales, combina el modelo con RAG.
-No se ha ejecutado el entrenamiento de Terraria automáticamente.
+```bash
+python trainer/evaluate.py \
+  --dataset trainer/corpora/terraria/evaluation.jsonl \
+  --model Qwen/Qwen3.5-0.8B \
+  --output outputs/terraria-base.json
 
-## Fuentes y condiciones del corpus
+python trainer/evaluate.py \
+  --dataset trainer/corpora/terraria/evaluation.jsonl \
+  --model terraria-en-v2 \
+  --output outputs/terraria-lora.json
+```
 
-La [ficha del dataset](../trainer/corpora/terraria/README.md) explica el alcance,
-las 28 fuentes, el método de consulta, la licencia **CC BY-NC-SA 4.0** y las
-limitaciones. Conserva esa atribución al compartir los datos. No asumas permiso
-para uso comercial ni para distribuir pesos sin revisar las licencias aplicables.
+Compara las respuestas completas además de `passRate`. `contains` sigue siendo un
+smoke test léxico: una respuesta puede contener la palabra esperada y ser
+contradictoria, o fallar por usar una paráfrasis correcta.
+
+También compara en el chat una conversación nueva, sin RAG/CAG, con el mismo
+prompt, temperatura y límite de tokens para Base y LoRA. La telemetría de la web
+permite revisar latencia, tokens generados, tok/s y `finish_reason`.
+
+## Qué queremos aprender con esta versión
+
+Este experimento cambia deliberadamente dos cosas que podían limitar la calidad:
+
+- **selección del checkpoint**: ahora existe una señal de generalización separada
+  del entrenamiento;
+- **datos**: el corpus pasa de 96 ejemplos SFT en español a 128 en inglés, agrega
+  temas nuevos y añade un validation set de 24 ejemplos.
+
+Por ahora dejamos rank, alpha, dropout, learning rate, epochs y `all-linear`
+iguales. Si la calidad mejora, podremos atribuir buena parte del cambio al enfoque
+de datos/selección. Si `eval_loss` no mejora o la evaluación final continúa mala,
+el siguiente experimento debería cambiar una sola variable a la vez (por ejemplo
+learning rate o módulos LoRA) para evitar confundir causas.
+
+## Corpus y licencia
+
+Consulta `trainer/corpora/terraria/README.md` para el detalle de las 42 fuentes,
+particiones, alcance y condiciones **CC BY-NC-SA 4.0**. El corpus es una colección
+curada para experimentar; para cobertura amplia, actualizada y con fuentes, RAG
+sigue siendo la herramienta adecuada.
