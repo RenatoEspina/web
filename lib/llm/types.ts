@@ -17,6 +17,11 @@ export interface LlmConfig {
   timeoutMs: number;
 }
 
+export interface CompletionOptions {
+  temperature?: number;
+  maxTokens?: number;
+}
+
 export interface ProviderHealth {
   ok: boolean;
   status?: number;
@@ -37,6 +42,6 @@ export interface CompletionResult {
 }
 
 export interface LlmProvider {
-  complete(messages: ChatMessage[], signal: AbortSignal): Promise<CompletionResult>;
+  complete(messages: ChatMessage[], signal: AbortSignal, options?: CompletionOptions): Promise<CompletionResult>;
   health(signal: AbortSignal): Promise<ProviderHealth>;
 }
