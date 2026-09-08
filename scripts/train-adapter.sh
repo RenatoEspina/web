@@ -62,9 +62,18 @@ for arg in "${extra_args[@]}"; do
   fi
 done
 
-if [[ "$has_validation" == false && "$dataset" == *-training.jsonl ]]; then
-  validation_dataset="${dataset%-training.jsonl}-validation.jsonl"
-  if [[ -f "$validation_dataset" ]]; then
+if [[ "$has_validation" == false ]]; then
+  validation_dataset=""
+  if [[ "$dataset" == *"terraria-training.jsonl" ]]; then
+    validation_dataset="trainer/corpora/terraria/validation.jsonl"
+  elif [[ "$dataset" == *-training.jsonl ]]; then
+    sibling_validation="${dataset%-training.jsonl}-validation.jsonl"
+    if [[ -f "$sibling_validation" ]]; then
+      validation_dataset="$sibling_validation"
+    fi
+  fi
+
+  if [[ -n "$validation_dataset" && -f "$validation_dataset" ]]; then
     echo "== Validación separada detectada: $validation_dataset =="
     "$trainer_python" trainer/validate_dataset.py "$validation_dataset"
     extra_args+=("--validation-dataset" "$validation_dataset")
