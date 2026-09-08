@@ -8,10 +8,15 @@ import time
 from pathlib import Path
 from urllib.request import Request, urlopen
 
-PROMPTS = (
+DISTRIBUTION_PROMPTS = (
     "¿Qué ocurre si uso get con una clave inexistente en un HashMap? Responde brevemente en español.",
     "¿Cuándo conviene usar RAG en vez de fine-tuning? Responde en una frase.",
     "Explica brevemente cómo empezar una partida de Terraria.",
+)
+GENERATION_PROMPTS = (
+    "Explica la diferencia entre RAG y fine-tuning en cinco puntos e incluye un ejemplo práctico de cuándo usar cada uno.",
+    "Explica qué devuelve HashMap.get cuando una clave no existe, cómo distinguir ese caso de un valor null almacenado y muestra un ejemplo Java corto.",
+    "Explica en seis pasos cómo empezar una partida nueva de Terraria, desde recolectar recursos hasta prepararse para la primera noche.",
 )
 GENERATION_MAX_TOKENS = 256
 
@@ -91,8 +96,7 @@ def verify(base_url: str, base_model: str, adapter: str) -> dict:
         raise ValueError("El modelo base y el adaptador deben ser distintos.")
 
     distribution_cases = []
-    generation_cases = []
-    for prompt in PROMPTS:
+    for prompt in DISTRIBUTION_PROMPTS:
         baseline = distribution_probe(base_url, base_model, prompt)
         repeated = distribution_probe(base_url, base_model, prompt)
         adapted = distribution_probe(base_url, adapter, prompt)
@@ -107,6 +111,8 @@ def verify(base_url: str, base_model: str, adapter: str) -> dict:
             "adapter": adapted,
         })
 
+    generation_cases = []
+    for prompt in GENERATION_PROMPTS:
         base_generation = generation_probe(base_url, base_model, prompt)
         adapter_generation = generation_probe(base_url, adapter, prompt)
         generation_cases.append({
