@@ -1,5 +1,5 @@
 import { endpoint } from "./config";
-import type { ChatMessage, CompletionResult, LlmConfig, LlmProvider, ProviderHealth } from "./types";
+import type { ChatMessage, CompletionOptions, CompletionResult, LlmConfig, LlmProvider, ProviderHealth } from "./types";
 
 type OllamaResponse = {
   message?: {
@@ -17,7 +17,11 @@ function tokenCount(value: unknown): number | undefined {
 export class OllamaProvider implements LlmProvider {
   constructor(private readonly config: LlmConfig) {}
 
-  async complete(messages: ChatMessage[], signal: AbortSignal): Promise<CompletionResult> {
+  async complete(
+    messages: ChatMessage[],
+    signal: AbortSignal,
+    options?: CompletionOptions,
+  ): Promise<CompletionResult> {
     const started = performance.now();
     const response = await fetch(endpoint(this.config.baseUrl, "/api/chat"), {
       method: "POST",
@@ -27,8 +31,8 @@ export class OllamaProvider implements LlmProvider {
         messages,
         stream: false,
         options: {
-          temperature: this.config.temperature,
-          num_predict: this.config.maxTokens,
+          temperature: options?.temperature ?? this.config.temperature,
+          num_predict: options?.maxTokens ?? this.config.maxTokens,
         },
       }),
       signal,
