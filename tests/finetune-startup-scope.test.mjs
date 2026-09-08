@@ -39,11 +39,28 @@ test("SFT valida la máscara assistant-only antes de cargar el modelo cuantizado
   assert.match(trainer, /if all\(assistant_mask\)/);
 });
 
-test("los modelos Terraria reciben un master prompt de dominio estricto", () => {
+test("los modelos Terraria reciben master prompt y filtro duro de dominio", () => {
   assert.match(masterPrompt, /TERRARIA_MASTER_PROMPT/);
   assert.match(masterPrompt, /scope is strictly Terraria/i);
+  assert.match(masterPrompt, /TERRARIA_OUT_OF_SCOPE_MESSAGE/);
   assert.match(masterPrompt, /Solo puedo responder preguntas relacionadas con Terraria\./);
   assert.match(masterPrompt, /LLM_TERRARIA_MODELS/);
   assert.match(masterPrompt, /TERRARIA_MODEL_PATTERN/);
+  assert.match(masterPrompt, /TERRARIA_SCOPE_CLASSIFIER_PROMPT/);
+  assert.match(masterPrompt, /Return exactly one label and nothing else: TERRARIA or OUTSIDE/);
+  assert.match(masterPrompt, /parseTerrariaScopeDecision/);
+  assert.match(masterPrompt, /content\.trim\(\)\.toUpperCase\(\) === "TERRARIA"/);
+
+  const classify = chatRoute.indexOf("terrariaScopeMessages(messages)");
+  const reject = chatRoute.indexOf("scope_rejected", classify);
+  const knowledge = chatRoute.indexOf("buildKnowledgeContext", classify);
+  const adapterCompletion = chatRoute.indexOf("complete(requestMessages", classify);
+
+  assert.ok(classify >= 0);
+  assert.ok(reject > classify);
+  assert.ok(knowledge > reject);
+  assert.ok(adapterCompletion > knowledge);
+  assert.match(chatRoute, /complete\([\s\S]*terrariaScopeMessages\(messages\)[\s\S]*config\.model/);
+  assert.match(chatRoute, /message: TERRARIA_OUT_OF_SCOPE_MESSAGE/);
   assert.match(chatRoute, /withMasterPrompt\(knowledgeMessages, selectedModel\)/);
 });
