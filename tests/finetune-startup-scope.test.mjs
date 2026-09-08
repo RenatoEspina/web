@@ -52,9 +52,11 @@ test("Terraria usa el mismo system prompt en SFT y serving", () => {
   assert.match(masterPrompt, /metadata\.json/);
   assert.match(masterPrompt, /TERRARIA_ADAPTER_SYSTEM_PROMPT = terrariaMetadata\.system/);
   assert.match(masterPrompt, /TERRARIA_MASTER_PROMPT = TERRARIA_ADAPTER_SYSTEM_PROMPT/);
-  assert.match(masterPrompt, /content: TERRARIA_ADAPTER_SYSTEM_PROMPT/);
+  assert.match(masterPrompt, /adapterSystemPrompt\(model\)/);
+  assert.match(masterPrompt, /isTerrariaModel\(model\) \? TERRARIA_ADAPTER_SYSTEM_PROMPT : null/);
+  assert.match(masterPrompt, /content: prompt/);
   assert.match(masterPrompt, /first\?\.role === "system"/);
-  assert.match(masterPrompt, /TERRARIA_ADAPTER_SYSTEM_PROMPT.*first\.content/s);
+  assert.match(masterPrompt, /content: `\$\{prompt\}\\n\\n\$\{first\.content\}`/);
 });
 
 test("los modelos Terraria mantienen filtro duro con clasificación determinista", () => {
@@ -63,20 +65,21 @@ test("los modelos Terraria mantienen filtro duro con clasificación determinista
   assert.match(masterPrompt, /LLM_TERRARIA_MODELS/);
   assert.match(masterPrompt, /TERRARIA_MODEL_PATTERN/);
   assert.match(masterPrompt, /TERRARIA_SCOPE_CLASSIFIER_PROMPT/);
+  assert.match(masterPrompt, /directly about unmodded Terraria/);
   assert.match(masterPrompt, /Return exactly one label and nothing else: TERRARIA or OUTSIDE/);
   assert.match(masterPrompt, /parseTerrariaScopeDecision/);
   assert.match(masterPrompt, /\.test\(content\)/);
 
-  const classify = chatRoute.indexOf("terrariaScopeMessages(messages)");
+  const knowledge = chatRoute.indexOf("const knowledge =");
+  const classify = chatRoute.indexOf("terrariaScopeMessages(knowledgeMessages)", knowledge);
   const reject = chatRoute.indexOf("scope_rejected", classify);
-  const knowledge = chatRoute.indexOf("buildKnowledgeContext", classify);
-  const adapterCompletion = chatRoute.indexOf("complete(requestMessages", classify);
+  const adapterCompletion = chatRoute.indexOf("const completion = await complete(", reject);
 
-  assert.ok(classify >= 0);
+  assert.ok(knowledge >= 0);
+  assert.ok(classify > knowledge);
   assert.ok(reject > classify);
-  assert.ok(knowledge > reject);
-  assert.ok(adapterCompletion > knowledge);
-  assert.match(chatRoute, /terrariaScopeMessages\(messages\)[\s\S]*config\.model[\s\S]*temperature: 0[\s\S]*maxTokens: 8/);
+  assert.ok(adapterCompletion > reject);
+  assert.match(chatRoute, /terrariaScopeMessages\(knowledgeMessages\)[\s\S]*config\.model[\s\S]*temperature: 0[\s\S]*maxTokens: 8/);
   assert.match(chatRoute, /message: TERRARIA_OUT_OF_SCOPE_MESSAGE/);
   assert.match(chatRoute, /withMasterPrompt\(knowledgeMessages, selectedModel\)/);
 });

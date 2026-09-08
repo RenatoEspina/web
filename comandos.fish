@@ -247,6 +247,26 @@ function stop_service
     compose stop $argv[1] >/dev/null 2>&1
 end
 
+function persist_llm_model
+    set -l model $argv[1]
+    set -l env_file "$project_dir/.env.local"
+    set -l temporary "$env_file.tmp"
+    require_command awk
+
+    if test -f "$env_file"
+        awk -v model="$model" '
+            BEGIN { found = 0 }
+            /^LLM_MODEL=/ { print "LLM_MODEL=" model; found = 1; next }
+            { print }
+            END { if (!found) print "LLM_MODEL=" model }
+        ' "$env_file" > "$temporary"; or fail "No fue posible preparar la actualización de LLM_MODEL."
+    else
+        printf 'LLM_MODEL=%s\n' "$model" > "$temporary"; or fail "No fue posible crear .env.local."
+    end
+
+    mv "$temporary" "$env_file"; or fail "No fue posible actualizar .env.local."
+end
+
 function prepare_embeddings
     require_docker
     set -l model $argv[1]
@@ -359,6 +379,12 @@ function start_vllm
 
     wait_for_url vllm http://127.0.0.1:8000/health 900
     echo "vLLM está disponible en http://127.0.0.1:8000"
+
+    # El modelo que realmente arrancó pasa a ser también el modelo base persistido
+    # del gateway. Esto elimina divergencias VLLM_MODEL/LLM_MODEL entre sesiones.
+    persist_llm_model "$model"
+    echo "LLM_MODEL sincronizado en .env.local: $model"
+    echo "Si la web ya estaba ejecutándose, reiníciala para que relea .env.local."
 
     # Con vLLM ya iniciado, confirma que Ollama realmente puede servir embeddings.
     verify_embeddings "$default_embedding_model"

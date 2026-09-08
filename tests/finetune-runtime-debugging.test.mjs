@@ -22,7 +22,16 @@ test("vLLM valida el modelo base y el parent del adapter antes de inferir", () =
   assert.match(runtime, /baseEntries\.find\(\(entry\) => entry\.id === config\.model\)/);
   assert.match(runtime, /selected\.parent !== config\.model/);
   assert.match(runtime, /No se realizará inferencia con un LoRA incompatible/);
-  assert.match(route, /validateRuntimeModelSelection\(config, selectedModel, inferenceSignal\)/);
+
+  const validation = route.indexOf("validateRuntimeModelSelection(");
+  const generation = route.indexOf("const completion = await complete(");
+  assert.ok(validation >= 0);
+  assert.ok(generation > validation);
+  assert.match(route, /RUNTIME_VALIDATION_TIMEOUT_MS/);
+  assert.match(
+    route,
+    /AbortSignal\.timeout\(Math\.min\(config\.timeoutMs, RUNTIME_VALIDATION_TIMEOUT_MS\)\)/,
+  );
 });
 
 test("cambiar de modelo inicia una comparación con historial limpio", () => {

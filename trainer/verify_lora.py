@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import time
 from pathlib import Path
 from urllib.request import Request, urlopen
@@ -19,13 +20,77 @@ GENERATION_PROMPTS = (
     "Explica en seis pasos cómo empezar una partida nueva de Terraria, desde recolectar recursos hasta prepararse para la primera noche.",
 )
 GENERATION_MAX_TOKENS = 256
+SAFE_ADAPTER_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def dataset_system_prompt(dataset: Path) -> str | None:
+    try:
+        resolved = dataset.resolve()
+        trainer_root = (ROOT / "trainer").resolve()
+        if not resolved.is_relative_to(trainer_root):
+            parts = dataset.parts
+            if "trainer" not in parts:
+                return None
+            trainer_index = parts.index("trainer")
+            resolved = (ROOT / Path(*parts[trainer_index:])).resolve()
+            if not resolved.is_relative_to(trainer_root):
+                return None
+
+        prompts: set[str] = set()
+        for line in resolved.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            example = json.loads(line)
+            messages = example.get("messages") if isinstance(example, dict) else None
+            if not isinstance(messages, list):
+                return None
+            system = next(
+                (
+                    message.get("content")
+                    for message in messages
+                    if isinstance(message, dict) and message.get("role") == "system"
+                ),
+                None,
+            )
+            if not isinstance(system, str) or not system.strip():
+                return None
+            prompts.add(system.strip())
+            if len(prompts) > 1:
+                return None
+        return next(iter(prompts)) if len(prompts) == 1 else None
+    except (OSError, ValueError, json.JSONDecodeError):
+        return None
+
+
+def adapter_system_prompt(adapter: str) -> str | None:
+    if not SAFE_ADAPTER_NAME.fullmatch(adapter):
+        return None
+    manifest_path = ROOT / "adapters" / adapter / "manifest.json"
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+    serving = manifest.get("serving")
+    if isinstance(serving, dict):
+        prompt = serving.get("systemPrompt")
+        if isinstance(prompt, str) and prompt.strip():
+            return prompt.strip()
+
+    dataset = manifest.get("dataset")
+    return dataset_system_prompt(Path(dataset)) if isinstance(dataset, str) else None
 
 
 def chat_request(base_url: str, model: str, prompt: str, *, max_tokens: int,
-                 logprobs: bool = False) -> tuple[dict, float]:
+                 logprobs: bool = False, system_prompt: str | None = None) -> tuple[dict, float]:
+    messages = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.append({"role": "user", "content": prompt})
     payload = {
         "model": model,
-        "messages": [{"role": "user", "content": prompt}],
+        "messages": messages,
         "temperature": 0,
         "seed": 42,
         "max_tokens": max_tokens,
@@ -44,8 +109,15 @@ def chat_request(base_url: str, model: str, prompt: str, *, max_tokens: int,
     return result, time.perf_counter() - started
 
 
-def distribution_probe(base_url: str, model: str, prompt: str) -> dict:
-    result, _ = chat_request(base_url, model, prompt, max_tokens=1, logprobs=True)
+def distribution_probe(base_url: str, model: str, prompt: str, system_prompt: str | None = None) -> dict:
+    result, _ = chat_request(
+        base_url,
+        model,
+        prompt,
+        max_tokens=1,
+        logprobs=True,
+        system_prompt=system_prompt,
+    )
     choice = result["choices"][0]
     entries = (choice.get("logprobs") or {}).get("content") or []
     if not entries or not entries[0].get("top_logprobs"):
@@ -56,13 +128,19 @@ def distribution_probe(base_url: str, model: str, prompt: str) -> dict:
     }
 
 
-def probe(base_url: str, model: str, prompt: str) -> dict:
+def probe(base_url: str, model: str, prompt: str, system_prompt: str | None = None) -> dict:
     """Compatibilidad con consumidores anteriores del diagnóstico de primer token."""
-    return distribution_probe(base_url, model, prompt)
+    return distribution_probe(base_url, model, prompt, system_prompt)
 
 
-def generation_probe(base_url: str, model: str, prompt: str) -> dict:
-    result, latency = chat_request(base_url, model, prompt, max_tokens=GENERATION_MAX_TOKENS)
+def generation_probe(base_url: str, model: str, prompt: str, system_prompt: str | None = None) -> dict:
+    result, latency = chat_request(
+        base_url,
+        model,
+        prompt,
+        max_tokens=GENERATION_MAX_TOKENS,
+        system_prompt=system_prompt,
+    )
     choice = result["choices"][0]
     usage = result.get("usage") or {}
     text = choice.get("message", {}).get("content") or ""
@@ -100,11 +178,12 @@ def verify(base_url: str, base_model: str, adapter: str) -> dict:
     if base_model == adapter:
         raise ValueError("El modelo base y el adaptador deben ser distintos.")
 
+    system_prompt = adapter_system_prompt(adapter)
     distribution_cases = []
     for prompt in DISTRIBUTION_PROMPTS:
-        baseline = probe(base_url, base_model, prompt)
-        repeated = probe(base_url, base_model, prompt)
-        adapted = probe(base_url, adapter, prompt)
+        baseline = probe(base_url, base_model, prompt, system_prompt)
+        repeated = probe(base_url, base_model, prompt, system_prompt)
+        adapted = probe(base_url, adapter, prompt, system_prompt)
         noise = difference(baseline, repeated)
         delta = difference(baseline, adapted)
         distribution_cases.append({
@@ -118,8 +197,8 @@ def verify(base_url: str, base_model: str, adapter: str) -> dict:
 
     generation_cases = []
     for prompt in GENERATION_PROMPTS:
-        base_generation = generation_probe(base_url, base_model, prompt)
-        adapter_generation = generation_probe(base_url, adapter, prompt)
+        base_generation = generation_probe(base_url, base_model, prompt, system_prompt)
+        adapter_generation = generation_probe(base_url, adapter, prompt, system_prompt)
         generation_cases.append({
             "prompt": prompt,
             "base": base_generation,
@@ -135,13 +214,17 @@ def verify(base_url: str, base_model: str, adapter: str) -> dict:
         "adapter": adapter,
         "status": "effect_detected" if detected else "inconclusive",
         "note": "Un cambio de probabilidades demuestra efecto del LoRA, no mejor calidad ni cobertura completa de tensores.",
+        "servingParity": {
+            "systemPromptApplied": bool(system_prompt),
+            "systemPromptCharacters": len(system_prompt) if system_prompt else 0,
+        },
         "distributionCases": distribution_cases,
         "generationCases": generation_cases,
         "diagnostics": {
             "markedlyShorterCases": shorter_cases,
             "earlyStopSuspected": early_stop_suspected,
             "interpretation": (
-                "El adaptador termina mucho antes que el modelo base en varias pruebas; revisa EOS, longitud y dataset."
+                "El adaptador termina mucho antes que el modelo base en varias pruebas; compáralo con la longitud objetivo del dataset antes de atribuirlo a EOS prematuro."
                 if early_stop_suspected else
                 "No se detectó un patrón consistente de terminación prematura en estas pruebas."
             ),

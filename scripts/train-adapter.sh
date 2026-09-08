@@ -90,9 +90,37 @@ compose() {
 }
 
 vllm_running=false
+vllm_model=""
 if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
   if compose ps --status running --services 2>/dev/null | grep -qx vllm; then
     vllm_running=true
+    # Guarda el modelo base realmente servido antes de liberar la GPU. Esto es
+    # más fiable que asumir el default de docker-compose al restaurar el servicio.
+    vllm_model=$("$trainer_python" - <<'PY' 2>/dev/null || true
+import json
+from urllib.request import urlopen
+
+try:
+    with urlopen("http://127.0.0.1:8000/v1/models", timeout=3) as response:
+        data = json.load(response).get("data", [])
+    base = next(
+        (
+            item.get("id")
+            for item in data
+            if isinstance(item, dict) and item.get("id") and not item.get("parent")
+        ),
+        "",
+    )
+    print(base or "")
+except Exception:
+    print("")
+PY
+)
+    if [[ -n "$vllm_model" ]]; then
+      echo "Modelo vLLM detectado antes del entrenamiento: $vllm_model"
+    else
+      echo "Aviso: no se pudo detectar el modelo base activo; el reinicio usará la configuración normal de Compose." >&2
+    fi
     compose stop vllm
   fi
 else
@@ -102,7 +130,13 @@ fi
 restart_vllm() {
   if [[ "$vllm_running" == true ]]; then
     echo "Reiniciando vLLM..."
-    compose up -d vllm || echo "Aviso: el entrenamiento terminó, pero vLLM no pudo reiniciarse automáticamente." >&2
+    if [[ -n "$vllm_model" ]]; then
+      VLLM_MODEL="$vllm_model" compose up -d vllm || \
+        echo "Aviso: el entrenamiento terminó, pero vLLM no pudo reiniciarse automáticamente." >&2
+    else
+      compose up -d vllm || \
+        echo "Aviso: el entrenamiento terminó, pero vLLM no pudo reiniciarse automáticamente." >&2
+    fi
   fi
 }
 trap restart_vllm EXIT
