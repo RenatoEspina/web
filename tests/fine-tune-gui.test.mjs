@@ -134,7 +134,9 @@ test("train.py valida la arquitectura antes de cargar el modelo y no usa Dataset
   assert.match(trainer, /AutoConfig\.from_pretrained/);
   assert.match(trainer, /Dataset\.from_list\(examples\)/);
   assert.match(trainer, /assistant_only_loss=True/);
-  assert.match(trainer, /audit_token_lengths/);\n  assert.match(trainer, /datasetSha256/);\n  assert.match(trainer, /model-revision/);
+  assert.match(trainer, /audit_token_lengths/);
+  assert.match(trainer, /datasetSha256/);
+  assert.match(trainer, /model-revision/);
   assert.match(trainer, /processing_class=tokenizer/);
   assert.match(trainer, /dtype=compute_dtype/);
   assert.doesNotMatch(trainer, /Dataset\.from_list\(examples\)\.map/);
