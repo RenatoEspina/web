@@ -23,12 +23,13 @@ Comprueba también la configuración persistida:
 grep -E '^(LLM_MODEL|LLM_ADAPTER_MODELS)=' .env.local
 ```
 
-El gateway valida `/v1/models` y los metadatos locales del adaptador antes de
-cada inferencia con vLLM. Si el modelo de `.env.local` no está servido, no se
-puede resolver el `parent` o la base declarada en los archivos del adaptador no
-coincide con el `root` servido, `/api/chat` responde con HTTP 409. También valida
-la configuración de la copia cargada/exportada. Los metadatos ausentes o
-ilegibles impiden inferir hasta restaurar los archivos locales correctos.
+La procedencia del LoRA se valida en la GUI local antes de cargarlo y antes de
+incorporarlo a `LLM_ADAPTER_MODELS`. El gateway no intenta leer `adapters/`
+desde el filesystem del host porque puede ejecutarse dentro del runtime
+Vinext/Cloudflare Workers. Antes de cada inferencia consulta `/v1/models` y
+rechaza con HTTP 409 si el modelo base configurado no está servido, el adapter
+seleccionado no está cargado, faltan `parent` o `root`, o el `parent` del LoRA
+resuelve a un `root` diferente del modelo base configurado.
 
 ## 2. Comprobar que el adapter pertenece al modelo base correcto
 
@@ -83,7 +84,7 @@ Interpretación rápida:
 - **Tok/s parecido + muchos menos tokens + `finishReason=stop`:** el adapter está terminando temprano; revisar entrenamiento/dataset.
 - **Mismos tokens aproximados + tok/s mucho menor:** investigar runtime, LoRA o GPU.
 - **`finishReason=length`:** la salida chocó con `LLM_MAX_TOKENS`; no es EOS aprendido.
-- **HTTP 409:** hay una desincronización entre gateway, vLLM o los metadatos de la base del adapter, o estos no se pueden leer.
+- **HTTP 409:** hay una desincronización entre gateway y vLLM: base esperada no servida, adapter no cargado o identidad runtime (`parent`/`root`) incoherente.
 
 Para adapters Terraria, `/api/chat` hace además una clasificación de scope con el modelo base. Esa clasificación usa `temperature=0` y `maxTokens=8`; no reutiliza los parámetros de generación globales. Si `scope.allowed` es `false`, la consulta se rechaza antes de llegar al LoRA.
 
