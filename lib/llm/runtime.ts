@@ -1,3 +1,6 @@
+import { readFileSync, realpathSync } from "node:fs";
+import { isAbsolute, relative, resolve } from "node:path";
+
 import { endpoint } from "./config";
 import type { LlmConfig } from "./types";
 
@@ -30,6 +33,46 @@ function parseModelEntries(value: unknown): VllmModelEntry[] {
       ...(typeof record.root === "string" && record.root ? { root: record.root } : {}),
     }];
   });
+}
+
+function verifyAdapterTrainingBase(model: string, runtimeRoot: string | undefined, base: string): void {
+  try {
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(model) || !runtimeRoot) throw new Error("Nombre o ruta de adaptador inválidos.");
+    const adaptersRoot = realpathSync(resolve(process.cwd(), "adapters"));
+    const original = resolve(adaptersRoot, model);
+    // Docker mounts the local adapters directory at /adapters. Also support
+    // vLLM started on the host with an absolute path inside that directory.
+    const loaded = runtimeRoot.startsWith("/adapters/")
+      ? resolve(adaptersRoot, runtimeRoot.slice("/adapters/".length))
+      : resolve(runtimeRoot);
+    const readMetadata = (directory: string, filename: string): Record<string, unknown> => {
+      const path = realpathSync(resolve(directory, filename));
+      const within = relative(adaptersRoot, path);
+      if (within.startsWith("..") || isAbsolute(within)) throw new Error("Metadatos fuera de adapters/.");
+      const data: unknown = JSON.parse(readFileSync(path, "utf-8"));
+      if (!data || typeof data !== "object" || Array.isArray(data)) throw new Error("Metadatos inválidos.");
+      return data as Record<string, unknown>;
+    };
+    // Check the runtime copy too: an export may predate a replaced local adapter.
+    for (const directory of new Set([original, loaded])) {
+      const metadata = readMetadata(directory, "adapter_config.json");
+      if (metadata.base_model_name_or_path !== base) throw new Error("adapter_config.json declara otra base o no la especifica.");
+    }
+    let manifest: Record<string, unknown> | undefined;
+    try {
+      manifest = readMetadata(original, "manifest.json");
+    } catch (error) {
+      // Legacy PEFT adapters can lack a manifest; adapter_config is mandatory.
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+    if (manifest && "baseModel" in manifest && manifest.baseModel !== base) throw new Error("El manifest declara otra base.");
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : "Metadatos no disponibles.";
+    throw new RuntimeModelError(
+      `No se pudo verificar que '${model}' fue entrenado sobre '${base}'. No se realizará inferencia con un LoRA incompatible. ${detail}`,
+      409,
+    );
+  }
 }
 
 export async function validateRuntimeModelSelection(
@@ -85,11 +128,15 @@ export async function validateRuntimeModelSelection(
     );
   }
 
-  if (selectedModel !== config.model && selected.parent !== config.model) {
-    throw new RuntimeModelError(
-      `El adaptador '${selectedModel}' declara como parent '${selected.parent ?? "desconocido"}', pero el gateway usa '${config.model}'. No se realizará inferencia con un LoRA incompatible.`,
-      409,
-    );
+  if (selectedModel !== config.model) {
+    const parent = baseEntries.find((entry) => entry.id === selected.parent);
+    if (!configuredBase.root || !parent || parent.root !== configuredBase.root) {
+      throw new RuntimeModelError(
+        `No se pudo identificar la base servida para '${selectedModel}'. No se realizará inferencia con un LoRA incompatible.`,
+        409,
+      );
+    }
+    verifyAdapterTrainingBase(selectedModel, selected.root, configuredBase.root);
   }
 
   return selected;

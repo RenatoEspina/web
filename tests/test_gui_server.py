@@ -1,3 +1,5 @@
+import io
+import json
 import sys
 import tempfile
 import unittest
@@ -203,6 +205,70 @@ class VllmStartTests(unittest.TestCase):
         self.assertEqual(env["LLM_BRIDGE_NONINTERACTIVE"], "1")
         self.assertEqual(job.result["ollama"], "started")
         self.assertEqual(job.result["embeddings"], "ready")
+
+
+class AdapterBaseTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.adapters = Path(self.temporary.name)
+        self.directory = self.adapters / "domain-v1"
+        self.directory.mkdir()
+        self.write("adapter_config.json", {"base_model_name_or_path": "research/base-a"})
+        self.write("manifest.json", {"baseModel": "research/base-a"})
+        (self.directory / "adapter_model.safetensors").write_bytes(b"fixture")
+        self.patch = mock.patch.object(gui_server, "ADAPTER_DIR", self.adapters)
+        self.patch.start()
+        self.addCleanup(self.patch.stop)
+
+    def write(self, name, data):
+        (self.directory / name).write_text(json.dumps(data), encoding="utf-8")
+
+    def models(self, root, alias="served-base"):
+        return mock.patch.object(gui_server, "urlopen", side_effect=lambda *a, **k: io.BytesIO(json.dumps({
+            "data": [{"id": alias, "root": root},
+                     {"id": "domain-v1", "root": "/adapters/domain-v1", "parent": alias}]
+        }).encode()))
+
+    def test_wrong_base_is_rejected_before_export_load_or_allowlist_changes(self):
+        with self.models("research/base-b"), mock.patch.object(gui_server, "prepare_runtime_adapter") as export, mock.patch.object(
+            gui_server, "post_vllm"
+        ) as post, mock.patch.object(gui_server, "set_adapter_allowed_in_env") as allowlist:
+            with self.assertRaisesRegex(RuntimeError, "fue entrenado sobre"):
+                gui_server.run_action(gui_server.Job(id="test", action="load-adapter"), {"name": "domain-v1"})
+            export.assert_not_called()
+            post.assert_not_called()
+            allowlist.assert_not_called()
+
+    def test_correct_base_supports_served_alias_and_loads(self):
+        with self.models("research/base-a"), mock.patch.object(gui_server, "prepare_runtime_adapter", return_value="/adapters/domain-v1"), mock.patch.object(
+            gui_server, "post_vllm", return_value="ok"
+        ) as post, mock.patch.object(gui_server, "set_adapter_allowed_in_env") as allowlist:
+            self.assertEqual(gui_server.validate_adapter_base("domain-v1"), "served-base")
+            gui_server.run_action(gui_server.Job(id="test", action="load-adapter"), {"name": "domain-v1"})
+            post.assert_called_once_with("/v1/load_lora_adapter", {"lora_name": "domain-v1", "lora_path": "/adapters/domain-v1"})
+            allowlist.assert_called_once_with("domain-v1", True, rollback_runtime=True)
+
+    def test_alias_does_not_disguise_another_base(self):
+        with self.models("research/base-b", alias="research/base-a"):
+            with self.assertRaises(RuntimeError):
+                gui_server.validate_adapter_base("domain-v1")
+
+    def test_missing_or_conflicting_metadata_fails_closed(self):
+        with self.models("research/base-a"):
+            self.write("manifest.json", {"baseModel": "research/base-b"})
+            with self.assertRaises(ValueError):
+                gui_server.validate_adapter_base("domain-v1")
+            (self.directory / "manifest.json").unlink()
+            self.assertEqual(gui_server.validate_adapter_base("domain-v1"), "served-base")
+            self.write("adapter_config.json", {})
+            with self.assertRaises(ValueError):
+                gui_server.validate_adapter_base("domain-v1")
+
+    def test_missing_runtime_root_fails_closed(self):
+        with self.models(None):
+            with self.assertRaises(RuntimeError):
+                gui_server.validate_adapter_base("domain-v1")
 
 
 class DatasetTests(unittest.TestCase):

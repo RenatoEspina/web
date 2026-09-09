@@ -16,7 +16,7 @@ from pathlib import Path
 import torch
 from datasets import Dataset
 from peft import LoraConfig, prepare_model_for_kbit_training
-from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig, set_seed
 from trl import SFTConfig, SFTTrainer
 from trl.chat_template_utils import get_training_chat_template
 
@@ -165,6 +165,9 @@ def prepare_assistant_only_template(tokenizer, examples: list[dict]) -> None:
 
 def main() -> None:
     args = arguments()
+    # TRL initializes LoRA before Trainer applies SFTConfig.seed. Seed model and
+    # adapter initialization too, not just the training loop and data order.
+    set_seed(args.seed)
     if not SAFE_NAME.fullmatch(args.name):
         raise ValueError("--name contiene caracteres no permitidos")
     if not torch.cuda.is_available():

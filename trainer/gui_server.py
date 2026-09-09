@@ -411,6 +411,33 @@ def post_vllm(path: str, payload: dict[str, str]) -> str:
         raise RuntimeError("vLLM no está disponible en 127.0.0.1:8000.") from error
 
 
+def validate_adapter_base(name: str) -> str:
+    """Check training metadata against the served root, never a LoRA's parent."""
+    config, manifest = read_config(ADAPTER_DIR / name)
+    if not isinstance(config, dict) or not isinstance(manifest, dict):
+        raise ValueError("Los metadatos del adaptador deben ser objetos JSON.")
+    base = config.get("base_model_name_or_path")
+    if not isinstance(base, str) or not base.strip():
+        raise ValueError("El adaptador no declara base_model_name_or_path; no se puede verificar su base.")
+    base = base.strip()
+    if "baseModel" in manifest and manifest["baseModel"] != base:
+        raise ValueError("baseModel del manifest no coincide con adapter_config.json.")
+
+    with urlopen("http://127.0.0.1:8000/v1/models", timeout=5) as response:
+        payload = json.load(response)
+    models = payload.get("data", []) if isinstance(payload, dict) else []
+    bases = [item for item in models if isinstance(item, dict) and not item.get("parent")
+             and isinstance(item.get("id"), str) and item["id"].strip()
+             and isinstance(item.get("root"), str) and item["root"].strip()] if isinstance(models, list) else []
+    # Different served names may be aliases for one root. An alias alone is not
+    # evidence that the weights match the base used to train this adapter.
+    roots = {item["root"].strip() for item in bases}
+    if roots != {base}:
+        served = ", ".join(sorted(roots)) or "base desconocida"
+        raise RuntimeError(f"El adaptador '{name}' fue entrenado sobre '{base}', pero vLLM sirve '{served}'. No se cargará un LoRA incompatible.")
+    return bases[0]["id"]
+
+
 def prepare_runtime_adapter(job: Job, name: str) -> str:
     directory = ADAPTER_DIR / name
     if directory.is_symlink():
@@ -691,8 +718,7 @@ def run_action(job: Job, payload: dict[str, Any]) -> None:
     if action == "verify-adapter":
         name = validate_adapter_name(payload.get("name"))
         loaded_adapter_path(name)
-        config, manifest = read_config(ADAPTER_DIR / name)
-        base_model = validate_model(config.get("base_model_name_or_path") or manifest.get("baseModel"))
+        base_model = validate_adapter_base(name)
         run_command(job, [str(trainer_python()), str(TRAINER_DIR / "verify_lora.py"),
                           "--base-model", base_model, "--adapter", name],
                     label="Comparando probabilidades: base repetida vs LoRA")
@@ -710,6 +736,7 @@ def run_action(job: Job, payload: dict[str, Any]) -> None:
         if action == "load-adapter":
             if not (directory / "adapter_config.json").is_file() or not (directory / "adapter_model.safetensors").is_file():
                 raise RuntimeError("El adaptador no contiene los archivos PEFT esperados.")
+            validate_adapter_base(name)
             runtime_path = prepare_runtime_adapter(job, name)
             append_log(job, f"Cargando {name} en vLLM...")
             response = post_vllm(

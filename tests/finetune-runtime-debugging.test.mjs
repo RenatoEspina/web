@@ -20,7 +20,7 @@ test("el gateway conserva telemetría útil para comparar base y LoRA", () => {
 test("vLLM valida el modelo base y el parent del adapter antes de inferir", () => {
   assert.match(runtime, /\/v1\/models/);
   assert.match(runtime, /baseEntries\.find\(\(entry\) => entry\.id === config\.model\)/);
-  assert.match(runtime, /selected\.parent !== config\.model/);
+  assert.match(runtime, /verifyAdapterTrainingBase\(selectedModel, selected\.root, configuredBase\.root\)/);
   assert.match(runtime, /No se realizará inferencia con un LoRA incompatible/);
 
   const validation = route.indexOf("validateRuntimeModelSelection(");

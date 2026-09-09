@@ -41,6 +41,7 @@ class NamespaceTests(unittest.TestCase):
             for name in ("adapter_config.json", "adapter_model.safetensors"):
                 (directory / name).write_text("{}")
             with (mock.patch.object(gui_server, "ADAPTER_DIR", Path(temp)),
+                  mock.patch.object(gui_server, "validate_adapter_base", return_value="base"),
                   mock.patch.object(gui_server, "prepare_runtime_adapter", return_value="/adapters/.vllm-exports/demo/hash"),
                   mock.patch.object(gui_server, "post_vllm", return_value="ok") as post,
                   mock.patch.object(gui_server, "set_adapter_allowed_in_env")):
@@ -56,6 +57,7 @@ class NamespaceTests(unittest.TestCase):
             for filename in ("adapter_config.json", "adapter_model.safetensors"):
                 (directory / filename).write_text("{}")
             with (mock.patch.object(gui_server, "ADAPTER_DIR", Path(temp)),
+                  mock.patch.object(gui_server, "validate_adapter_base", return_value="base"),
                   mock.patch.object(gui_server, "prepare_runtime_adapter", side_effect=RuntimeError("export failed")),
                   mock.patch.object(gui_server, "post_vllm") as post):
                 with self.assertRaisesRegex(RuntimeError, "export failed"):

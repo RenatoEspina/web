@@ -100,6 +100,11 @@ adapters/qwen-dominio-v1/
 
 `manifest.json` registra modelo base, dataset, parámetros, métricas de entrenamiento y versión de PyTorch.
 
+La semilla se aplica antes de cargar el modelo e inicializar LoRA, además de
+pasarse a la configuración del entrenamiento. Repetir el experimento requiere
+también los mismos pesos base, datos y versiones; el determinismo completo de
+CUDA depende del hardware y de las operaciones utilizadas.
+
 ## Carga dinámica en vLLM
 
 El flujo estático basado en editar `--lora-modules` manualmente está retirado del flujo normal.
@@ -115,9 +120,33 @@ Al cargar un adaptador, la GUI también lo incorpora a `LLM_ADAPTER_MODELS` en `
 
 El puerto de vLLM permanece ligado a `127.0.0.1`; los endpoints administrativos de LoRA no deben exponerse mediante el túnel público.
 
+Antes de cargar o comprobar un adaptador, la GUI contrasta
+`adapter_config.json.base_model_name_or_path` y, si existe,
+`manifest.json.baseModel` con el `root` del modelo base servido. Los nombres
+publicados por vLLM pueden ser alias: la identidad comprobada es su `root`.
+Un alias con el nombre de la base entrenada no permite usar otros pesos.
+
+El gateway repite esta comprobación antes de inferir y comprueba también la
+configuración de la copia que vLLM tiene cargada, incluidas las exportaciones.
+Necesita acceso al mismo directorio local `adapters/` (montado como `/adapters`
+en Docker). Si faltan los metadatos obligatorios o las identidades no coinciden,
+rechaza la inferencia con HTTP 409. Los adaptadores PEFT antiguos sin manifest
+pueden usarse si conservan un `adapter_config.json` válido. No se deducen
+equivalencias entre rutas o checkpoints diferentes: un `root` diferente requiere
+servir la base original o reentrenar sobre la base deseada.
+
 ## Evaluación base contra LoRA
 
-`trainer/evaluate.py` ejecuta casos independientes contra un modelo ya servido por vLLM. Cada caso puede incluir una lista `contains` con fragmentos mínimos esperados.
+`trainer/evaluate.py` ejecuta casos independientes contra un modelo ya servido por vLLM.
+Cada caso debe incluir una lista `contains` no vacía con fragmentos de texto
+esperados, todos no vacíos. Una conversación de evaluación puede empezar con un
+`system`, después alterna `user`/`assistant` y siempre termina en `user`: la
+respuesta que se evalúa no debe estar ya incluida en la entrada.
+
+Se valida todo el archivo antes de llamar al modelo. Los casos sin criterios,
+con respuestas de referencia al final, formatos inválidos o un dataset vacío
+se rechazan; nunca cuentan como aprobados. Los turnos assistant anteriores sí
+se permiten como contexto de una evaluación de varios turnos.
 
 ```fish
 ./comandos.fish fine-tune-evaluate datasets/evaluacion.jsonl \
