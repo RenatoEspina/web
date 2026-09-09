@@ -182,3 +182,41 @@ Ejecuta:
 ```
 
 para ver la ayuda actual.
+
+## Auditoría de calidad y reproducibilidad
+
+Antes de reservar la GPU, el entrenador aplica la misma plantilla de chat a todos
+los ejemplos y registra su distribución de tokens: total, tokens assistant,
+p50, p95, truncamientos y respuestas que quedarían fuera de `--max-length`.
+Por defecto aborta si una respuesta assistant sería truncada. Para aceptar ese
+riesgo de manera consciente se puede usar:
+
+```fish
+./comandos.fish fine-tune-train dataset.jsonl adaptador-v1 \
+  --max-length 1024 --allow-truncation
+```
+
+El `manifest.json` resultante incluye hashes SHA-256 del dataset y validación,
+el commit del repositorio, la revisión del modelo, el hash del chat template,
+versiones, hardware y los resúmenes de tokens. Para reproducibilidad en
+Hugging Face, entrega una revisión fija:
+
+```fish
+./comandos.fish fine-tune-train dataset.jsonl adaptador-v1 \
+  --model-revision <commit-o-revision>
+```
+
+Para medir si el LoRA mejora realmente las respuestas, sirve los dos modelos y
+envía las mismas preguntas:
+
+```fish
+./comandos.fish fine-tune-evaluate trainer/corpora/terraria/evaluation.jsonl \
+  qwen-terraria outputs/terraria-comparison.json \
+  --compare-model Qwen/Qwen3.5-0.8B
+```
+
+El reporte conserva un resultado independiente por modelo y calcula
+`passedDelta`, `passRateDelta` y la diferencia de latencia. Un `eval_loss`
+menor o un `effect_detected` positivo no reemplaza esta comparación: solo
+demuestra aprendizaje o modificación de probabilidades, no una mejora de
+calidad.
