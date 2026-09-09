@@ -1,0 +1,32 @@
+{
+  "scope": "dataset_and_evaluator_checks_only",
+  "date": "2026-09-09",
+  "upstream_commit": "615f31782e1af8fdb8966931c2622c4b92443c4b",
+  "python_tests": {
+    "run": 78,
+    "passed": 73,
+    "skipped": 5,
+    "failed": 0,
+    "skipped_reason": "Existing vLLM export tests require optional torch and safetensors dependencies"
+  },
+  "new_corpus_evaluator_integration_tests": {
+    "passed": 30,
+    "failed": 0
+  },
+  "node_regression_test_files": {
+    "passed": 3,
+    "failed": 0
+  },
+  "sft_training_examples_validated": 2400,
+  "sft_validation_examples_validated": 400,
+  "total_unique_prompts": 3700,
+  "cross_split_semantic_group_overlaps": 0,
+  "numeric_labels_checked_two_arithmetic_implementations": 2590,
+  "deterministic_rebuild_check": "passed",
+  "shell_syntax": "passed",
+  "git_diff_whitespace": "passed",
+  "training_run": null,
+  "model_inference_run": null,
+  "observed_training_metrics": null,
+  "note": "Validation of generated data and software is not evidence of model quality or fine-tuning improvement."
+}

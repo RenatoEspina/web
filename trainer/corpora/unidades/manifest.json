@@ -1,0 +1,109 @@
+{
+  "dataset": "unidades-es",
+  "version": "1.0.0",
+  "seed": 20260909,
+  "synthetic": true,
+  "generation": "authored templates + exact rational arithmetic; no LLM outputs",
+  "training_executed": false,
+  "model_metrics": null,
+  "split_sizes": {
+    "train": 2400,
+    "validation": 400,
+    "evaluation": 600,
+    "challenge": 300
+  },
+  "categories": {
+    "train": {
+      "falta_dato": 240,
+      "incompatible": 240,
+      "longitud": 280,
+      "masa": 280,
+      "no_soportada": 240,
+      "superficie": 280,
+      "temperatura": 280,
+      "tiempo": 280,
+      "volumen": 280
+    },
+    "validation": {
+      "falta_dato": 40,
+      "incompatible": 40,
+      "longitud": 47,
+      "masa": 47,
+      "no_soportada": 40,
+      "superficie": 46,
+      "temperatura": 46,
+      "tiempo": 47,
+      "volumen": 47
+    },
+    "evaluation": {
+      "falta_dato": 60,
+      "incompatible": 60,
+      "longitud": 70,
+      "masa": 70,
+      "no_soportada": 60,
+      "superficie": 70,
+      "temperatura": 70,
+      "tiempo": 70,
+      "volumen": 70
+    },
+    "challenge": {
+      "falta_dato": 30,
+      "incompatible": 30,
+      "longitud": 35,
+      "masa": 35,
+      "no_soportada": 30,
+      "superficie": 35,
+      "temperatura": 35,
+      "tiempo": 35,
+      "volumen": 35
+    }
+  },
+  "unique_semantic_groups": {
+    "train": 2326,
+    "validation": 392,
+    "evaluation": 574,
+    "challenge": 292
+  },
+  "semantic_group_overlap": {
+    "train/validation": 0,
+    "train/evaluation": 0,
+    "train/challenge": 0,
+    "validation/evaluation": 0,
+    "validation/challenge": 0,
+    "evaluation/challenge": 0
+  },
+  "template_families": {
+    "train": 12,
+    "validation": 4,
+    "evaluation": 4,
+    "challenge": 6
+  },
+  "unique_prompts": 3700,
+  "label_validation": "Every numeric label agrees between Fraction and Decimal implementations",
+  "files": {
+    "trainer/examples/unidades-training.jsonl": {
+      "sha256": "ac9594dcd71ab1e9ad68b68158749e5587ba15cb79d464d0096209abfdaffc97",
+      "bytes": 3075474
+    },
+    "trainer/corpora/unidades/train-audit.jsonl": {
+      "sha256": "660295d7ef2d9076eb8ec437852b47f47268b9bcc4afdb615672206bb165e901",
+      "bytes": 3375394
+    },
+    "trainer/corpora/unidades/validation.jsonl": {
+      "sha256": "dff7ed56284e1adf0fafff7c9a4f79536bd659a89b288f89a77d3d921875a669",
+      "bytes": 525449
+    },
+    "trainer/corpora/unidades/validation-eval.jsonl": {
+      "sha256": "36ecf1bc297ac44457dbbfdc7b08e60ac6566e831d4a27443c006b8635aac3e2",
+      "bytes": 577430
+    },
+    "trainer/corpora/unidades/evaluation.jsonl": {
+      "sha256": "69b089adaadb14b2a23a32989f7115e489e6921c7827bf6657561f0b03571443",
+      "bytes": 867896
+    },
+    "trainer/corpora/unidades/challenge.jsonl": {
+      "sha256": "f0e926a9ee23b924df0e6e1b1836a4207a30d6e47959a8eda27d38d46294a69d",
+      "bytes": 435553
+    }
+  }
+}
