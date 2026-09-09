@@ -126,14 +126,21 @@ Antes de cargar o comprobar un adaptador, la GUI contrasta
 publicados por vLLM pueden ser alias: la identidad comprobada es su `root`.
 Un alias con el nombre de la base entrenada no permite usar otros pesos.
 
-El gateway repite esta comprobación antes de inferir y comprueba también la
-configuración de la copia que vLLM tiene cargada, incluidas las exportaciones.
-Necesita acceso al mismo directorio local `adapters/` (montado como `/adapters`
-en Docker). Si faltan los metadatos obligatorios o las identidades no coinciden,
-rechaza la inferencia con HTTP 409. Los adaptadores PEFT antiguos sin manifest
-pueden usarse si conservan un `adapter_config.json` válido. No se deducen
-equivalencias entre rutas o checkpoints diferentes: un `root` diferente requiere
-servir la base original o reentrenar sobre la base deseada.
+La procedencia del entrenamiento se valida en esa capa local, antes de llamar a
+`/v1/load_lora_adapter` y antes de incorporar el nombre a `LLM_ADAPTER_MODELS`.
+El gateway web puede ejecutarse mediante Vinext/Cloudflare Workers y por diseño
+no intenta leer `adapters/` desde el filesystem del host. Antes de cada inferencia
+consulta `/v1/models` y exige que el modelo base configurado esté servido, que el
+adaptador seleccionado siga cargado, que exponga `parent` y `root`, y que el
+`parent` resuelva al mismo `root` que la base configurada. Cualquier
+inconsistencia runtime se rechaza con HTTP 409.
+
+Las exportaciones Qwen 3.5 son content-addressed. Si se reemplazan los archivos
+locales de un adaptador, la copia ya cargada continúa siendo la que usa vLLM
+hasta descargar/recargar; la siguiente carga vuelve a validar la base y genera o
+selecciona la exportación correspondiente al contenido actual. Los adaptadores
+PEFT antiguos sin manifest pueden usarse si conservan un `adapter_config.json`
+válido.
 
 ## Evaluación base contra LoRA
 
