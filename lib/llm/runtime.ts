@@ -1,6 +1,3 @@
-import { readFileSync, realpathSync } from "node:fs";
-import { isAbsolute, relative, resolve } from "node:path";
-
 import { endpoint } from "./config";
 import type { LlmConfig } from "./types";
 
@@ -35,41 +32,27 @@ function parseModelEntries(value: unknown): VllmModelEntry[] {
   });
 }
 
-function verifyAdapterTrainingBase(model: string, runtimeRoot: string | undefined, base: string): void {
-  try {
-    if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(model) || !runtimeRoot) throw new Error("Nombre o ruta de adaptador inválidos.");
-    const adaptersRoot = realpathSync(resolve(process.cwd(), "adapters"));
-    const original = resolve(adaptersRoot, model);
-    // Docker mounts the local adapters directory at /adapters. Also support
-    // vLLM started on the host with an absolute path inside that directory.
-    const loaded = runtimeRoot.startsWith("/adapters/")
-      ? resolve(adaptersRoot, runtimeRoot.slice("/adapters/".length))
-      : resolve(runtimeRoot);
-    const readMetadata = (directory: string, filename: string): Record<string, unknown> => {
-      const path = realpathSync(resolve(directory, filename));
-      const within = relative(adaptersRoot, path);
-      if (within.startsWith("..") || isAbsolute(within)) throw new Error("Metadatos fuera de adapters/.");
-      const data: unknown = JSON.parse(readFileSync(path, "utf-8"));
-      if (!data || typeof data !== "object" || Array.isArray(data)) throw new Error("Metadatos inválidos.");
-      return data as Record<string, unknown>;
-    };
-    // Check the runtime copy too: an export may predate a replaced local adapter.
-    for (const directory of new Set([original, loaded])) {
-      const metadata = readMetadata(directory, "adapter_config.json");
-      if (metadata.base_model_name_or_path !== base) throw new Error("adapter_config.json declara otra base o no la especifica.");
-    }
-    let manifest: Record<string, unknown> | undefined;
-    try {
-      manifest = readMetadata(original, "manifest.json");
-    } catch (error) {
-      // Legacy PEFT adapters can lack a manifest; adapter_config is mandatory.
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-    }
-    if (manifest && "baseModel" in manifest && manifest.baseModel !== base) throw new Error("El manifest declara otra base.");
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : "Metadatos no disponibles.";
+function verifyAdapterRuntimeIdentity(
+  model: string,
+  selected: VllmModelEntry,
+  baseEntries: VllmModelEntry[],
+  configuredBase: VllmModelEntry,
+): void {
+  // La procedencia de entrenamiento se valida en la GUI local antes de cargar
+  // el LoRA y antes de incorporarlo a LLM_ADAPTER_MODELS. Este gateway puede
+  // ejecutarse como Cloudflare Worker/Vinext y no tiene acceso al filesystem
+  // del host, por lo que aquí solo se valida el estado que vLLM sirve ahora.
+  if (!configuredBase.root || !selected.parent || !selected.root) {
     throw new RuntimeModelError(
-      `No se pudo verificar que '${model}' fue entrenado sobre '${base}'. No se realizará inferencia con un LoRA incompatible. ${detail}`,
+      `No se pudo identificar la base servida para '${model}'. No se realizará inferencia con un LoRA en un estado runtime incompleto.`,
+      409,
+    );
+  }
+
+  const parent = baseEntries.find((entry) => entry.id === selected.parent);
+  if (!parent?.root || parent.root !== configuredBase.root) {
+    throw new RuntimeModelError(
+      `El adaptador '${model}' está asociado a una base distinta de la configurada. No se realizará inferencia con un LoRA incompatible.`,
       409,
     );
   }
@@ -129,14 +112,7 @@ export async function validateRuntimeModelSelection(
   }
 
   if (selectedModel !== config.model) {
-    const parent = baseEntries.find((entry) => entry.id === selected.parent);
-    if (!configuredBase.root || !parent || parent.root !== configuredBase.root) {
-      throw new RuntimeModelError(
-        `No se pudo identificar la base servida para '${selectedModel}'. No se realizará inferencia con un LoRA incompatible.`,
-        409,
-      );
-    }
-    verifyAdapterTrainingBase(selectedModel, selected.root, configuredBase.root);
+    verifyAdapterRuntimeIdentity(selectedModel, selected, baseEntries, configuredBase);
   }
 
   return selected;
