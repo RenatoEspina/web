@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import unicodedata
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
@@ -40,7 +41,13 @@ def _last_user_prompt(messages: list[dict]) -> str | None:
     ]
     if not prompts or not isinstance(prompts[-1], str):
         return None
-    return _WHITESPACE.sub(" ", prompts[-1].strip().casefold())
+    normalized = unicodedata.normalize("NFKD", prompts[-1].casefold())
+    without_accents = "".join(
+        character for character in normalized
+        if not unicodedata.combining(character)
+    )
+    without_punctuation = re.sub(r"[^\w\s]", " ", without_accents)
+    return _WHITESPACE.sub(" ", without_punctuation.strip())
 
 
 def count_prompt_overlaps(first: list[dict], second: list[dict]) -> int:
