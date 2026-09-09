@@ -6,8 +6,10 @@ import argparse
 import json
 import math
 import os
+import platform
 import re
 import shutil
+import subprocess
 import tempfile
 import time
 from importlib.metadata import PackageNotFoundError, version
@@ -16,11 +18,17 @@ from pathlib import Path
 import torch
 from datasets import Dataset
 from peft import LoraConfig, prepare_model_for_kbit_training
-from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig, set_seed
 from trl import SFTConfig, SFTTrainer
 from trl.chat_template_utils import get_training_chat_template
 
 from dataset_validation import load_jsonl
+from training_quality import (
+    count_prompt_overlaps,
+    sha256_file,
+    stable_sha256,
+    summarize_token_lengths,
+)
 
 SAFE_NAME = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$")
 
@@ -32,6 +40,10 @@ def arguments() -> argparse.Namespace:
     parser.add_argument("--name", required=True)
     parser.add_argument("--output-root", type=Path, default=Path("adapters"))
     parser.add_argument("--model", default="Qwen/Qwen3.5-0.8B")
+    parser.add_argument(
+        "--model-revision",
+        help="Revisión o commit inmutable del modelo en Hugging Face; opcional para rutas locales.",
+    )
     parser.add_argument("--rank", type=int, choices=(8, 16, 32), default=16)
     parser.add_argument("--alpha", type=int, default=32)
     parser.add_argument("--dropout", type=float, default=0.05)
@@ -41,6 +53,11 @@ def arguments() -> argparse.Namespace:
     parser.add_argument("--gradient-accumulation", type=int, default=8)
     parser.add_argument("--max-length", type=int, default=1024)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument(
+        "--allow-truncation",
+        action="store_true",
+        help="Permite continuar aunque una respuesta assistant supere --max-length.",
+    )
     return parser.parse_args()
 
 
@@ -92,10 +109,13 @@ def common_system_prompt(examples: list[dict]) -> str | None:
     return next(iter(prompts)) if len(prompts) == 1 else None
 
 
-def validate_model_architecture(model_name: str) -> str:
+def validate_model_architecture(model_name: str, revision: str | None = None) -> str:
     """Falla antes de reservar VRAM si Transformers no conoce el checkpoint."""
+    load_kwargs = {"trust_remote_code": False}
+    if revision:
+        load_kwargs["revision"] = revision
     try:
-        config = AutoConfig.from_pretrained(model_name, trust_remote_code=False)
+        config = AutoConfig.from_pretrained(model_name, **load_kwargs)
     except (KeyError, ValueError) as error:
         raise RuntimeError(
             f"Transformers {package_version('transformers')} no puede cargar la arquitectura de {model_name}. "
@@ -108,6 +128,121 @@ def validate_model_architecture(model_name: str) -> str:
 def format_dataset(examples: list[dict]) -> Dataset:
     """Conserva los roles para que TRL pueda enmascarar el prompt de la pérdida."""
     return Dataset.from_list(examples)
+
+
+def pretrained_kwargs(revision: str | None) -> dict[str, object]:
+    kwargs: dict[str, object] = {"trust_remote_code": False}
+    if revision:
+        kwargs["revision"] = revision
+    return kwargs
+
+
+def _as_flat_list(value: object) -> list:
+    if hasattr(value, "tolist"):
+        value = value.tolist()
+    while isinstance(value, list) and len(value) == 1 and isinstance(value[0], list):
+        value = value[0]
+    return value if isinstance(value, list) else []
+
+
+def audit_token_lengths(
+    tokenizer,
+    examples: list[dict],
+    max_length: int,
+    label: str,
+    allow_truncation: bool,
+) -> dict:
+    """Mide el texto con la misma plantilla que usará SFTTrainer."""
+    total_tokens: list[int] = []
+    assistant_tokens: list[int] = []
+    truncated_examples: list[bool] = []
+    target_truncated: list[bool] = []
+    empty_assistant_after_limit: list[bool] = []
+
+    for number, example in enumerate(examples, 1):
+        encoded = tokenizer.apply_chat_template(
+            example["messages"],
+            tokenize=True,
+            return_dict=True,
+            return_assistant_tokens_mask=True,
+            add_generation_prompt=False,
+        )
+        input_ids = _as_flat_list(encoded.get("input_ids"))
+        assistant_mask = _as_flat_list(encoded.get("assistant_masks"))
+        if not input_ids or len(input_ids) != len(assistant_mask):
+            raise RuntimeError(
+                f"La auditoría de tokens no pudo validar el ejemplo {number} de {label}."
+            )
+        if not any(bool(value) for value in assistant_mask):
+            raise RuntimeError(
+                f"El ejemplo {number} de {label} no contiene tokens assistant entrenables."
+            )
+
+        total = len(input_ids)
+        assistant = sum(int(bool(value)) for value in assistant_mask)
+        truncated = total > max_length
+        target_would_be_truncated = any(
+            bool(value) for value in assistant_mask[max_length:]
+        )
+        empty_after_limit = not any(
+            bool(value) for value in assistant_mask[:max_length]
+        )
+
+        total_tokens.append(total)
+        assistant_tokens.append(assistant)
+        truncated_examples.append(truncated)
+        target_truncated.append(target_would_be_truncated)
+        empty_assistant_after_limit.append(empty_after_limit)
+
+    summary = summarize_token_lengths(
+        total_tokens,
+        assistant_tokens,
+        max_length,
+        truncated_examples,
+        target_truncated,
+        empty_assistant_after_limit,
+    )
+    print(json.dumps({"dataset": label, **summary}, ensure_ascii=False))
+
+    if summary["emptyAssistantAfterLimit"]:
+        raise RuntimeError(
+            f"{summary['emptyAssistantAfterLimit']} ejemplos de {label} quedarían sin "
+            "tokens assistant dentro de --max-length."
+        )
+    if summary["targetTruncatedExamples"] and not allow_truncation:
+        raise RuntimeError(
+            f"{summary['targetTruncatedExamples']} respuestas de {label} quedarían "
+            f"truncadas por --max-length={max_length}. Aumenta --max-length o usa "
+            "--allow-truncation de forma explícita."
+        )
+    if summary["targetTruncatedExamples"]:
+        print(
+            f"Aviso: {summary['targetTruncatedExamples']} respuestas de {label} "
+            "serán truncadas porque se solicitó --allow-truncation."
+        )
+    return summary
+
+
+def git_revision() -> str | None:
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=Path(__file__).resolve().parents[1],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    revision = result.stdout.strip()
+    return revision or None
+
+
+def cuda_device_name() -> str | None:
+    try:
+        return torch.cuda.get_device_name(0) if torch.cuda.is_available() else None
+    except (RuntimeError, AssertionError):
+        return None
 
 
 def prepare_assistant_only_template(tokenizer, examples: list[dict]) -> None:
@@ -165,6 +300,11 @@ def prepare_assistant_only_template(tokenizer, examples: list[dict]) -> None:
 
 def main() -> None:
     args = arguments()
+    model_revision = getattr(args, "model_revision", None)
+    allow_truncation = bool(getattr(args, "allow_truncation", False))
+    # TRL initializes LoRA before Trainer applies SFTConfig.seed. Seed model and
+    # adapter initialization too, not just the training loop and data order.
+    set_seed(args.seed)
     if not SAFE_NAME.fullmatch(args.name):
         raise ValueError("--name contiene caracteres no permitidos")
     if not torch.cuda.is_available():
@@ -185,12 +325,44 @@ def main() -> None:
             if args.validation_dataset.resolve() == args.dataset.resolve():
                 raise ValueError("El dataset de validación debe ser distinto del dataset de entrenamiento")
 
-        model_type = validate_model_architecture(args.model)
+        dataset_path = args.dataset.resolve()
+        validation_path = args.validation_dataset.resolve() if args.validation_dataset else None
+        dataset_sha256 = sha256_file(dataset_path)
+        validation_sha256 = sha256_file(validation_path) if validation_path else None
+        overlap_count = count_prompt_overlaps(examples, validation_examples or [])
+        if overlap_count:
+            raise ValueError(
+                "El dataset de validación repite "
+                f"{overlap_count} preguntas finales del dataset de entrenamiento; "
+                "se aborta para evitar fuga entre splits."
+            )
+        source_commit = git_revision()
 
-        tokenizer = AutoTokenizer.from_pretrained(args.model, trust_remote_code=False)
+        model_type = validate_model_architecture(args.model, model_revision)
+        load_kwargs = pretrained_kwargs(model_revision)
+
+        tokenizer = AutoTokenizer.from_pretrained(args.model, **load_kwargs)
         if tokenizer.pad_token is None:
             tokenizer.pad_token = tokenizer.eos_token
         prepare_assistant_only_template(tokenizer, examples)
+        train_token_audit = audit_token_lengths(
+            tokenizer,
+            examples,
+            args.max_length,
+            "train",
+            allow_truncation,
+        )
+        validation_token_audit = (
+            audit_token_lengths(
+                tokenizer,
+                validation_examples,
+                args.max_length,
+                "validation",
+                allow_truncation,
+            )
+            if validation_examples
+            else None
+        )
         dataset = format_dataset(examples)
         validation_dataset = format_dataset(validation_examples) if validation_examples else None
 
@@ -206,7 +378,7 @@ def main() -> None:
             quantization_config=quantization,
             device_map="auto",
             dtype=compute_dtype,
-            trust_remote_code=False,
+            **load_kwargs,
         )
         model.config.use_cache = False
         model = prepare_model_for_kbit_training(model, use_gradient_checkpointing=True)
@@ -263,6 +435,12 @@ def main() -> None:
             )
 
         result = trainer.train()
+        metrics = numeric_metrics(result.metrics)
+        train_runtime = metrics.get("train_runtime")
+        if train_runtime and train_runtime > 0:
+            metrics["train_tokens_per_second"] = (
+                train_token_audit["totalTokens"]["sum"] / train_runtime
+            )
 
         best_validation: dict[str, float] = {}
         if use_validation:
@@ -304,16 +482,31 @@ def main() -> None:
 
         system_prompt = common_system_prompt(examples)
         manifest = {
-            "schemaVersion": 2,
+            "schemaVersion": 3,
             "name": args.name,
             "baseModel": args.model,
             "modelType": model_type,
             "method": "SFT_QLORA",
             "createdAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-            "dataset": str(args.dataset.resolve()),
-            "validationDataset": str(args.validation_dataset.resolve()) if args.validation_dataset else None,
+            "dataset": str(dataset_path),
+            "validationDataset": str(validation_path) if validation_path else None,
             "examples": len(examples),
             "validationExamples": len(validation_examples or []),
+            "dataQuality": {
+                "trainTokenAudit": train_token_audit,
+                "validationTokenAudit": validation_token_audit,
+                "trainValidationPromptOverlap": overlap_count,
+            },
+            "reproducibility": {
+                "gitCommit": source_commit,
+                "modelRevision": model_revision,
+                "datasetSha256": dataset_sha256,
+                "validationDatasetSha256": validation_sha256,
+                "tokenizerChatTemplateSha256": stable_sha256(tokenizer.chat_template),
+                "python": platform.python_version(),
+                "cudaRuntime": torch.version.cuda,
+                "gpu": cuda_device_name(),
+            },
             "serving": {
                 "systemPrompt": system_prompt,
                 "systemPromptSource": "common_training_system" if system_prompt else None,
@@ -330,8 +523,10 @@ def main() -> None:
                 "gradientAccumulation": args.gradient_accumulation,
                 "maxLength": args.max_length,
                 "seed": args.seed,
+                "modelRevision": model_revision,
+                "allowTruncation": allow_truncation,
             },
-            "metrics": numeric_metrics(result.metrics),
+            "metrics": metrics,
             "qualitySelection": quality_selection,
             "versions": {
                 "torch": torch.__version__,

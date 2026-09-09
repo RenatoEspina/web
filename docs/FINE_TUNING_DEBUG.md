@@ -11,7 +11,11 @@ docker compose -p llm-bridge ps
 curl -s http://127.0.0.1:8000/v1/models | jq
 ```
 
-Debe aparecer el modelo base y, si el LoRA está cargado, una entrada adicional para el adapter. La entrada del adapter debe declarar como `parent` el mismo modelo base que usa el gateway.
+Debe aparecer el modelo base y, si el LoRA está cargado, una entrada adicional
+para el adapter. Su `parent` debe apuntar a una base servida, pero **no prueba la
+procedencia del entrenamiento**: en cargas dinámicas vLLM lo completa con la
+base activa. El `root` de la entrada base identifica el modelo realmente servido;
+su `id` puede ser un alias.
 
 Comprueba también la configuración persistida:
 
@@ -19,7 +23,12 @@ Comprueba también la configuración persistida:
 grep -E '^(LLM_MODEL|LLM_ADAPTER_MODELS)=' .env.local
 ```
 
-El gateway valida `/v1/models` antes de cada inferencia con vLLM. Si el modelo base de `.env.local` no coincide con el realmente servido, o si el `parent` del LoRA no coincide, `/api/chat` responde con HTTP 409 y un mensaje explícito en vez de generar en un estado incoherente.
+El gateway valida `/v1/models` y los metadatos locales del adaptador antes de
+cada inferencia con vLLM. Si el modelo de `.env.local` no está servido, no se
+puede resolver el `parent` o la base declarada en los archivos del adaptador no
+coincide con el `root` servido, `/api/chat` responde con HTTP 409. También valida
+la configuración de la copia cargada/exportada. Los metadatos ausentes o
+ilegibles impiden inferir hasta restaurar los archivos locales correctos.
 
 ## 2. Comprobar que el adapter pertenece al modelo base correcto
 
@@ -27,7 +36,9 @@ El gateway valida `/v1/models` antes de cada inferencia con vLLM. Si el modelo b
 jq '{baseModel, parameters, metrics}' adapters/<adapter>/manifest.json
 ```
 
-El campo `baseModel` debe ser exactamente el modelo base que está sirviendo vLLM.
+El campo `baseModel` y `adapter_config.json.base_model_name_or_path` deben
+coincidir con el `root` de la base servida. La GUI comprueba esto antes de cargar
+LoRA; no basta con cambiar el alias del servidor para aparentar compatibilidad.
 
 Para adapters creados con el entrenador actual, confirma además:
 
@@ -72,9 +83,16 @@ Interpretación rápida:
 - **Tok/s parecido + muchos menos tokens + `finishReason=stop`:** el adapter está terminando temprano; revisar entrenamiento/dataset.
 - **Mismos tokens aproximados + tok/s mucho menor:** investigar runtime, LoRA o GPU.
 - **`finishReason=length`:** la salida chocó con `LLM_MAX_TOKENS`; no es EOS aprendido.
-- **HTTP 409:** hay una desincronización entre gateway, vLLM o el `parent` del adapter.
+- **HTTP 409:** hay una desincronización entre gateway, vLLM o los metadatos de la base del adapter, o estos no se pueden leer.
 
 Para adapters Terraria, `/api/chat` hace además una clasificación de scope con el modelo base. Esa clasificación usa `temperature=0` y `maxTokens=8`; no reutiliza los parámetros de generación globales. Si `scope.allowed` es `false`, la consulta se rechaza antes de llegar al LoRA.
+
+El clasificador conserva íntegra la consulta actual, incluido su final. Recorta
+primero el historial para mantener el presupuesto agregado de 12.000 caracteres;
+el límite por turno histórico sigue siendo 1.500 caracteres. Así no clasifica
+solo la introducción de una pregunta larga. Estos límites son aproximaciones
+por caracteres, no una garantía de que cualquier texto quepa en el contexto de
+cualquier tokenizer.
 
 ## 5. Aislar completamente el frontend y el gateway
 

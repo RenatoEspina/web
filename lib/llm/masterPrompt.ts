@@ -126,10 +126,17 @@ export function terrariaScopeMessages(messages: ChatMessage[]): ChatMessage[] {
   const recentMessages = messages[0]?.role === "system"
     ? [messages[0], ...messages.slice(1).slice(-(MAX_SCOPE_HISTORY_ITEMS - 1))]
     : messages.slice(-MAX_SCOPE_HISTORY_ITEMS);
-  const conversation = recentMessages.map((message) => ({
-    role: message.role,
-    content: message.content.slice(0, MAX_SCOPE_MESSAGE_CHARS),
-  }));
+  const current = recentMessages.at(-1);
+  // Keep the existing aggregate character budget; give the current question
+  // priority over earlier turns so its end never disappears from classification.
+  let historyBudget = Math.max(0, MAX_SCOPE_HISTORY_ITEMS * MAX_SCOPE_MESSAGE_CHARS
+    - (current?.role === "user" ? current.content.length : 0));
+  const conversation = [...recentMessages].reverse().map((message, index) => {
+    if (index === 0 && message.role === "user") return message;
+    const content = message.content.slice(0, Math.min(MAX_SCOPE_MESSAGE_CHARS, historyBudget));
+    historyBudget -= content.length;
+    return { role: message.role, content };
+  }).filter((message) => message.content).reverse();
 
   return [
     { role: "system", content: TERRARIA_SCOPE_CLASSIFIER_PROMPT },
