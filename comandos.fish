@@ -10,7 +10,7 @@
 #   ./comandos.fish fine-tune-validate DATASET.jsonl
 #   ./comandos.fish fine-tune-train DATASET.jsonl NOMBRE [opciones]
 #   ./comandos.fish fine-tune-list
-#   ./comandos.fish fine-tune-evaluate DATASET.jsonl MODELO SALIDA.json
+#   ./comandos.fish fine-tune-evaluate DATASET.jsonl MODELO SALIDA.json [opciones]
 #   ./comandos.fish status
 #   ./comandos.fish stop
 #   ./comandos.fish down
@@ -82,8 +82,9 @@ function fine_tune_help
     echo "  ./comandos.fish fine-tune-list"
     echo "      Lista los adaptadores terminados que contienen manifest.json."
     echo
-    echo "  ./comandos.fish fine-tune-evaluate DATASET.jsonl MODELO SALIDA.json"
+    echo "  ./comandos.fish fine-tune-evaluate DATASET.jsonl MODELO SALIDA.json [opciones]"
     echo "      Evalúa un modelo ya servido por vLLM."
+    echo "      Para comparar base y LoRA añade: --compare-model OTRO_MODELO"
     echo
     echo "La carga y descarga dinámica de adaptadores se administra desde la GUI local de fine-tuning."
 end
@@ -195,16 +196,18 @@ function fine_tune_list
 end
 
 function fine_tune_evaluate
-    if test (count $argv) -ne 3
-        fail "Uso: ./comandos.fish fine-tune-evaluate DATASET.jsonl MODELO SALIDA.json"
+    if test (count $argv) -lt 3
+        fail "Uso: ./comandos.fish fine-tune-evaluate DATASET.jsonl MODELO SALIDA.json [opciones]"
     end
     require_trainer
     test -f "$argv[1]"; or fail "No existe el dataset '$argv[1]'."
+    set -l extra_args $argv[4..-1]
     set -l python_path (trainer_python)
     "$python_path" trainer/evaluate.py \
         --dataset "$argv[1]" \
         --model "$argv[2]" \
-        --output "$argv[3]"
+        --output "$argv[3]" \
+        $extra_args
 end
 
 function service_running
