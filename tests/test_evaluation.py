@@ -70,6 +70,41 @@ class EvaluationTests(unittest.TestCase):
         self.assertEqual((report["passed"], report["total"], report["passRate"]), (1, 2, 0.5))
         self.assertEqual(complete.call_args_list[0].args[3], conversation)
 
+    def test_rejects_same_model_as_comparison_target(self):
+        self.write_cases([self.case()])
+        self.options.compare_model = self.options.model
+        with mock.patch.object(evaluate, "arguments", return_value=self.options), mock.patch.object(
+            evaluate, "complete"
+        ) as complete:
+            with self.assertRaisesRegex(ValueError, "compare-model"):
+                evaluate.main()
+            complete.assert_not_called()
+
+    def test_compares_models_on_the_same_cases(self):
+        self.write_cases([
+            self.case(contains=["correcta"]),
+            self.case(contains=["especial"]),
+        ])
+        self.options.model = "base"
+        self.options.compare_model = "adapter"
+        with mock.patch.object(evaluate, "arguments", return_value=self.options), mock.patch.object(
+            evaluate,
+            "complete",
+            side_effect=[
+                "respuesta correcta",
+                "respuesta incompleta",
+                "respuesta correcta",
+                "respuesta especial",
+            ],
+        ), mock.patch("builtins.print"):
+            evaluate.main()
+
+        report = json.loads(self.options.output.read_text())
+        self.assertEqual(report["comparison"]["passedDelta"], 1)
+        self.assertEqual(report["comparison"]["passRateDelta"], 0.5)
+        self.assertEqual(report["models"]["base"]["passed"], 1)
+        self.assertEqual(report["models"]["adapter"]["passed"], 2)
+
 
 if __name__ == "__main__":
     unittest.main()
