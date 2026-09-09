@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test, { after } from "node:test";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createServer } from "vite";
 
@@ -32,74 +31,68 @@ test("scope preserves the complete current question while bounding earlier turns
   assert.equal(maxConversation.length, 1);
 });
 
-async function fixture(t, { trained = "research/base-a", served = "research/base-a", alias = served } = {}) {
-  const adapters = join(root, "adapters");
-  await mkdir(adapters, { recursive: true });
-  const directory = await mkdtemp(join(adapters, "review-test-"));
-  t.after(() => rm(directory, { recursive: true, force: true }));
-  const name = basename(directory);
-  const write = (file, data) => writeFile(join(directory, file), JSON.stringify(data));
-  await write("adapter_config.json", { base_model_name_or_path: trained });
-  await write("manifest.json", { baseModel: trained });
-  const entries = [{ id: alias, root: served }, { id: name, root: `/adapters/${name}`, parent: alias }];
+function fixture(t, { served = "research/base-a", alias = served } = {}) {
+  const name = "review-test-adapter";
+  const entries = [
+    { id: alias, root: served },
+    { id: name, root: `/adapters/${name}`, parent: alias },
+  ];
   t.mock.method(globalThis, "fetch", async () => Response.json({ data: entries }));
   const config = { provider: "vllm", model: alias, baseUrl: "http://unused", apiKey: "" };
-  return { entries, name, directory, write,
+  return {
+    entries,
+    name,
     validate: () => validateRuntimeModelSelection(config, name, AbortSignal.timeout(1000)),
-    validateBase: () => validateRuntimeModelSelection(config, alias, AbortSignal.timeout(1000)) };
+    validateBase: () => validateRuntimeModelSelection(config, alias, AbortSignal.timeout(1000)),
+  };
 }
 
-test("rejects a different training base even when vLLM parent matches the gateway", async (t) => {
-  const f = await fixture(t, { served: "research/base-b" });
-  await assert.rejects(f.validate(), (error) => error.status === 409 && /entrenado/.test(error.message));
-  assert.equal((await f.validateBase()).id, "research/base-b");
-});
-
-test("accepts verified training metadata with a served alias and matching root", async (t) => {
-  const f = await fixture(t, { alias: "public-base" });
+test("accepts a loaded adapter when its parent resolves to the configured served root", async (t) => {
+  const f = fixture(t, { alias: "public-base" });
   assert.equal((await f.validate()).id, f.name);
-  // vLLM may publish several aliases and use the first as the adapter parent.
+
+  // vLLM may publish several aliases for the same root and use any one as parent.
   f.entries.push({ id: "other-alias", root: "research/base-a" });
   f.entries[1].parent = "other-alias";
   assert.equal((await f.validate()).id, f.name);
 });
 
-test("rejects an alias that disguises a different root", async (t) => {
-  const f = await fixture(t, { served: "research/base-b", alias: "research/base-a" });
-  await assert.rejects(f.validate(), { status: 409 });
+test("rejects an adapter whose parent alias resolves to another served root", async (t) => {
+  const f = fixture(t, { alias: "public-base" });
+  f.entries.push({ id: "wrong-parent", root: "research/base-b" });
+  f.entries[1].parent = "wrong-parent";
+  await assert.rejects(f.validate(), (error) => error.status === 409 && /base distinta/.test(error.message));
 });
 
-test("checks fresh metadata and rejects absent, malformed or inconsistent identity", async (t) => {
-  const f = await fixture(t);
-  assert.equal((await f.validate()).id, f.name);
-  await f.write("manifest.json", { baseModel: "research/base-b" });
-  await assert.rejects(f.validate(), { status: 409 });
-  await rm(join(f.directory, "manifest.json"));
-  assert.equal((await f.validate()).id, f.name); // Legacy PEFT config is sufficient.
-  for (const invalid of [{}, [], { base_model_name_or_path: "research/base-b" }]) {
-    await f.write("adapter_config.json", invalid);
-    await assert.rejects(f.validate(), { status: 409 });
-  }
-  await rm(join(f.directory, "adapter_config.json"));
-  await assert.rejects(f.validate(), { status: 409 });
-});
-
-test("also verifies metadata in the runtime export instead of trusting a replaced original", async (t) => {
-  const f = await fixture(t);
-  const exported = join(f.directory, "export");
-  await mkdir(exported);
-  f.entries[1].root = `/adapters/${f.name}/export`;
-  await writeFile(join(exported, "adapter_config.json"), JSON.stringify({ base_model_name_or_path: "research/base-b" }));
-  await assert.rejects(f.validate(), { status: 409 });
-  await writeFile(join(exported, "adapter_config.json"), JSON.stringify({ base_model_name_or_path: "research/base-a" }));
-  assert.equal((await f.validate()).id, f.name);
-});
-
-test("fails closed when runtime identity or local metadata path cannot be verified", async (t) => {
-  const f = await fixture(t);
+test("fails closed when vLLM omits runtime identity fields", async (t) => {
+  const f = fixture(t);
   delete f.entries[0].root;
   await assert.rejects(f.validate(), { status: 409 });
+
   f.entries[0].root = "research/base-a";
-  f.entries[1].root = "/adapters/../../unknown-adapter";
+  delete f.entries[1].root;
   await assert.rejects(f.validate(), { status: 409 });
+
+  f.entries[1].root = `/adapters/${f.name}`;
+  delete f.entries[1].parent;
+  await assert.rejects(f.validate(), { status: 409 });
+});
+
+test("rejects a configured base or adapter that is not currently served", async (t) => {
+  const f = fixture(t);
+  assert.equal((await f.validateBase()).id, "research/base-a");
+
+  f.entries.splice(1, 1);
+  await assert.rejects(f.validate(), (error) => error.status === 409 && /no está cargado/.test(error.message));
+
+  f.entries.splice(0, 1);
+  await assert.rejects(f.validateBase(), (error) => error.status === 409 && /gateway espera/.test(error.message));
+});
+
+test("runtime validation is Worker-safe and never reads host adapters through node:fs", async () => {
+  const runtime = await readFile(new URL("../lib/llm/runtime.ts", import.meta.url), "utf8");
+  assert.doesNotMatch(runtime, /from ["']node:fs["']/);
+  assert.doesNotMatch(runtime, /process\.cwd\(\)/);
+  assert.doesNotMatch(runtime, /realpathSync|readFileSync/);
+  assert.match(runtime, /verifyAdapterRuntimeIdentity/);
 });
