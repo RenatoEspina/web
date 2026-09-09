@@ -1,0 +1,35 @@
+{
+  "status": "not_run",
+  "observed_model_metrics": null,
+  "dataset_version": "1.0.0",
+  "model": "Qwen/Qwen3.5-0.8B",
+  "model_revision": null,
+  "method": "QLoRA",
+  "initial_hyperparameters": {
+    "epochs": 2,
+    "learning_rate": 0.0001,
+    "rank": 16,
+    "alpha": 32,
+    "dropout": 0.05,
+    "batch_size": 1,
+    "gradient_accumulation": 8,
+    "max_length": 1024,
+    "seed": 42
+  },
+  "development_candidates_learning_rate": [0.00005, 0.0001, 0.0002],
+  "followup_epochs_if_needed": [1, 3],
+  "replication_seeds": [42, 43, 44],
+  "candidate_selection_dataset": "validation-eval.jsonl",
+  "candidate_selection_metric": "exact_accuracy",
+  "trainer_internal_checkpoint_metric": "eval_loss",
+  "final_only_datasets": ["evaluation.jsonl", "challenge.jsonl"],
+  "proposed_targets_not_measured": {
+    "exact_accuracy": 0.98,
+    "numeric_unit_accuracy": 0.98,
+    "schema_validity": 0.995,
+    "invalid_request_error_rate_max": 0.01,
+    "status_macro_f1": 0.98,
+    "challenge_exact_accuracy": 0.9,
+    "paired_improvement_ci95_lower_greater_than": 0
+  }
+}

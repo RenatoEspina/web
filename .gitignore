@@ -56,3 +56,12 @@ next-env.d.ts
 /trainer/examples/terraria-validation.jsonl
 /trainer/corpora/terraria/validation.jsonl
 /trainer/corpora/terraria/evaluation.jsonl
+
+# Generated units corpus; rebuild deterministically with its versioned build.py.
+/trainer/examples/unidades-training.jsonl
+/trainer/corpora/unidades/validation.jsonl
+/trainer/corpora/unidades/evaluation.jsonl
+/trainer/corpora/unidades/challenge.jsonl
+/trainer/corpora/unidades/train-audit.jsonl
+/trainer/corpora/unidades/validation-eval.jsonl
+/trainer/corpora/unidades/results/

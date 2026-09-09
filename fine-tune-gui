@@ -55,11 +55,13 @@ if [[ -z "$PYTHON" ]]; then
   exit 1
 fi
 
-# Los JSONL de Terraria son artefactos locales derivados del corpus inglés
-# versionado. Materializarlos aquí evita mantener copias generadas enormes en git
-# y garantiza que la GUI siempre muestre la revisión actual del corpus.
+# Los JSONL incluidos son artefactos locales derivados de corpus versionados.
+# Materializarlos aquí garantiza que la GUI muestre su revisión actual.
 if [[ -f "$ROOT/trainer/corpora/terraria/build.py" ]]; then
   "$PYTHON" "$ROOT/trainer/corpora/terraria/build.py" >/dev/null
+fi
+if [[ -f "$ROOT/trainer/corpora/unidades/build.py" ]]; then
+  "$PYTHON" "$ROOT/trainer/corpora/unidades/build.py" >/dev/null
 fi
 
 if curl -fsS "$URL/api/health" >/dev/null 2>&1; then

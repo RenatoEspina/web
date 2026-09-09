@@ -22,6 +22,15 @@ if [[ ! -f "$dataset" && "$dataset" == *"terraria-training.jsonl" ]]; then
   "$python_builder" trainer/corpora/terraria/build.py
 fi
 
+if [[ "$dataset" == *"unidades-training.jsonl" && ( ! -f "$dataset" || ! -f "trainer/corpora/unidades/validation.jsonl" ) ]]; then
+  python_builder=$(command -v python3 || command -v python || true)
+  if [[ -z "$python_builder" ]]; then
+    echo "No se encontró Python para reconstruir el corpus de unidades y su validación." >&2
+    exit 1
+  fi
+  "$python_builder" trainer/corpora/unidades/build.py
+fi
+
 if [[ ! -f "$dataset" ]]; then
   echo "No existe el dataset '$dataset'." >&2
   exit 1
@@ -66,6 +75,8 @@ if [[ "$has_validation" == false ]]; then
   validation_dataset=""
   if [[ "$dataset" == *"terraria-training.jsonl" ]]; then
     validation_dataset="trainer/corpora/terraria/validation.jsonl"
+  elif [[ "$dataset" == *"unidades-training.jsonl" ]]; then
+    validation_dataset="trainer/corpora/unidades/validation.jsonl"
   elif [[ "$dataset" == *-training.jsonl ]]; then
     sibling_validation="${dataset%-training.jsonl}-validation.jsonl"
     if [[ -f "$sibling_validation" ]]; then
