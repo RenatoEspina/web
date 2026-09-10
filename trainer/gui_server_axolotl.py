@@ -9,13 +9,18 @@ from __future__ import annotations
 
 import os
 import shutil
+import subprocess
 from pathlib import Path
 from typing import Any
 
 import gui_server as core
 
 AXOLOTL_VERSION = "0.18.0"
+AXOLOTL_PYTHON_VERSION = "3.12"
+AXOLOTL_TORCH_VERSION = "2.12.1"
+AXOLOTL_TORCH_BACKEND = os.environ.get("AXOLOTL_TORCH_BACKEND", "cu130").strip() or "cu130"
 AXOLOTL_VENV = core.TRAINER_DIR / ".venv-axolotl"
+UV_BOOTSTRAP_VENV = core.TRAINER_DIR / ".venv-uv-bootstrap"
 AXOLOTL_CHECK = core.TRAINER_DIR / "check_axolotl_environment.py"
 AXOLOTL_TRAIN_SCRIPT = core.ROOT / "scripts" / "train-adapter-axolotl.sh"
 
@@ -29,48 +34,193 @@ def axolotl_python() -> Path:
     return AXOLOTL_VENV / "bin" / "python"
 
 
-def _host_python() -> str:
-    for name in ("python3.13", "python3.12", "python3.11", "python3.14", "python3", "python"):
+def _bootstrap_python() -> str:
+    """Return any host Python capable of bootstrapping uv.
+
+    Axolotl itself does not run in this interpreter. uv creates the real
+    training environment with Python 3.12.
+    """
+    for name in ("python3.14", "python3.13", "python3.12", "python3.11", "python3", "python"):
         executable = shutil.which(name)
         if executable:
             return executable
-    raise RuntimeError("No se encontró Python 3 para crear trainer/.venv-axolotl.")
+    raise RuntimeError("No se encontró Python 3 para preparar uv.")
+
+
+def _configured_uv() -> Path | None:
+    configured = os.environ.get("AXOLOTL_UV", "").strip()
+    if configured:
+        candidate = Path(configured).expanduser()
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return candidate
+    system_uv = shutil.which("uv")
+    if system_uv:
+        return Path(system_uv)
+    candidate = UV_BOOTSTRAP_VENV / "bin" / "uv"
+    if candidate.is_file() and os.access(candidate, os.X_OK):
+        return candidate
+    return None
+
+
+def _ensure_uv(job: core.Job) -> Path:
+    uv = _configured_uv()
+    if uv is not None:
+        return uv
+
+    bootstrap_python = _bootstrap_python()
+    bootstrap_venv_python = UV_BOOTSTRAP_VENV / "bin" / "python"
+    if not bootstrap_venv_python.is_file():
+        core.run_command(
+            job,
+            [bootstrap_python, "-m", "venv", str(UV_BOOTSTRAP_VENV)],
+            label="Creando bootstrap local para uv",
+        )
+    core.run_command(
+        job,
+        [
+            str(bootstrap_venv_python),
+            "-m",
+            "pip",
+            "install",
+            "--upgrade",
+            "pip",
+            "uv",
+        ],
+        label="Instalando uv para administrar Python 3.12",
+    )
+    uv = _configured_uv()
+    if uv is None:
+        raise RuntimeError("uv se instaló, pero no se encontró su ejecutable.")
+    return uv
+
+
+def _venv_python_minor() -> str | None:
+    python_path = AXOLOTL_VENV / "bin" / "python"
+    if not python_path.is_file():
+        return None
+    try:
+        result = subprocess.run(
+            [
+                str(python_path),
+                "-c",
+                "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        return None
+    value = result.stdout.strip()
+    return value or None
+
+
+def axolotl_environment_ready() -> bool:
+    return (
+        _venv_python_minor() == AXOLOTL_PYTHON_VERSION
+        and (AXOLOTL_VENV / "bin" / "axolotl").is_file()
+        and (AXOLOTL_VENV / "bin" / "python").is_file()
+    )
+
+
+def _reset_incompatible_axolotl_venv(job: core.Job) -> None:
+    if not AXOLOTL_VENV.exists():
+        return
+    if AXOLOTL_VENV.is_symlink() or not AXOLOTL_VENV.is_dir():
+        raise RuntimeError(
+            f"{AXOLOTL_VENV} no es un directorio local seguro; no se eliminará automáticamente."
+        )
+    current = _venv_python_minor()
+    if current == AXOLOTL_PYTHON_VERSION:
+        return
+    core.append_log(
+        job,
+        f"El entorno Axolotl existente usa Python {current or 'desconocido'}; "
+        f"se reconstruirá con Python {AXOLOTL_PYTHON_VERSION}.",
+    )
+    shutil.rmtree(AXOLOTL_VENV)
 
 
 def setup_axolotl_environment(job: core.Job, *, automatic: bool = False) -> None:
-    python_command = _host_python()
+    _reset_incompatible_axolotl_venv(job)
+    uv = _ensure_uv(job)
     python_path = AXOLOTL_VENV / "bin" / "python"
+
+    install_env = os.environ.copy()
+    install_env["UV_TORCH_BACKEND"] = AXOLOTL_TORCH_BACKEND
+
     if not python_path.is_file():
         core.run_command(
             job,
-            [python_command, "-m", "venv", str(AXOLOTL_VENV)],
-            label="Creando entorno Axolotl automáticamente" if automatic else "Creando entorno Axolotl",
+            [
+                str(uv),
+                "venv",
+                "--python",
+                AXOLOTL_PYTHON_VERSION,
+                str(AXOLOTL_VENV),
+            ],
+            env=install_env,
+            label=(
+                f"Creando entorno Axolotl con Python {AXOLOTL_PYTHON_VERSION} automáticamente"
+                if automatic
+                else f"Creando entorno Axolotl con Python {AXOLOTL_PYTHON_VERSION}"
+            ),
         )
-    python_path = axolotl_python()
+
+    if _venv_python_minor() != AXOLOTL_PYTHON_VERSION:
+        raise RuntimeError(
+            f"Axolotl requiere el entorno del proyecto en Python {AXOLOTL_PYTHON_VERSION}; "
+            f"se detectó {_venv_python_minor() or 'una versión desconocida'}."
+        )
+
+    # This project uses single-GPU QLoRA and the generated config has no
+    # `deepspeed:` section. Installing the optional deepspeed extra would force
+    # a local CUDA-toolkit build (CUDA_HOME/nvcc) that this workflow does not use.
     core.run_command(
         job,
-        [str(python_path), "-m", "pip", "install", "--upgrade", "pip", "packaging", "setuptools", "wheel", "ninja"],
+        [
+            str(uv),
+            "pip",
+            "install",
+            "--python",
+            str(python_path),
+            "--upgrade",
+            "packaging",
+            "setuptools",
+            "wheel",
+            "ninja",
+        ],
+        env=install_env,
         label="Actualizando herramientas de instalación de Axolotl",
-    )
-    # Axolotl's pip installation requires PyTorch to exist before the
-    # --no-build-isolation install. 2.12.1 is the release recommended by the
-    # current Axolotl installation guide and supports the project's CUDA path.
-    core.run_command(
-        job,
-        [str(python_path), "-m", "pip", "install", "torch==2.12.1", "torchvision"],
-        label="Instalando PyTorch para Axolotl",
     )
     core.run_command(
         job,
         [
-            str(python_path),
-            "-m",
+            str(uv),
             "pip",
             "install",
-            "--no-build-isolation",
-            f"axolotl[deepspeed]=={AXOLOTL_VERSION}",
+            "--python",
+            str(python_path),
+            f"torch=={AXOLOTL_TORCH_VERSION}",
+            "torchvision",
         ],
-        label=f"Instalando Axolotl {AXOLOTL_VERSION}",
+        env=install_env,
+        label=f"Instalando PyTorch {AXOLOTL_TORCH_VERSION} para Axolotl",
+    )
+    core.run_command(
+        job,
+        [
+            str(uv),
+            "pip",
+            "install",
+            "--python",
+            str(python_path),
+            "--no-build-isolation",
+            f"axolotl=={AXOLOTL_VERSION}",
+        ],
+        env=install_env,
+        label=f"Instalando Axolotl {AXOLOTL_VERSION} sin DeepSpeed",
     )
 
 
@@ -97,7 +247,7 @@ def run_axolotl_train(job: core.Job, payload: dict[str, Any]) -> None:
     max_length = core.int_arg(payload, "maxLength", 1024, 128, 16384)
     seed = core.int_arg(payload, "seed", 42, 0, 2_147_483_647)
 
-    if not axolotl_python().is_file():
+    if not axolotl_environment_ready():
         setup_axolotl_environment(job, automatic=True)
     check_axolotl_environment(job, "Verificando entorno Axolotl")
 
@@ -156,12 +306,13 @@ def status_payload() -> dict[str, Any]:
     payload = _original_status_payload()
     payload["trainingBackend"] = "axolotl"
     payload["axolotlVersion"] = AXOLOTL_VERSION
-    payload["environmentReady"] = axolotl_python().is_file()
+    payload["axolotlPythonVersion"] = AXOLOTL_PYTHON_VERSION
+    payload["environmentReady"] = axolotl_environment_ready()
     return payload
 
 
 class AxolotlHandler(core.Handler):
-    server_version = "LLMBridgeAxolotlFineTune/1.0"
+    server_version = "LLMBridgeAxolotlFineTune/1.1"
 
     def _index(self) -> None:
         path = core.GUI_DIR / "index.html"
@@ -172,7 +323,10 @@ class AxolotlHandler(core.Handler):
             return
         text = text.replace("QLoRA · SFT · asistente local", "AXOLOTL · QLoRA · SFT")
         text = text.replace("Fine-tuning local", "Fine-tuning local · Axolotl")
-        text = text.replace("Python 3.14 compatible", f"Backend: Axolotl {AXOLOTL_VERSION}")
+        text = text.replace(
+            "Python 3.14 compatible",
+            f"Axolotl {AXOLOTL_VERSION} · Python {AXOLOTL_PYTHON_VERSION}",
+        )
         text = text.replace("trainer/.venv", "trainer/.venv-axolotl")
         body = text.encode("utf-8")
         self.send_response(core.HTTPStatus.OK)
@@ -201,5 +355,8 @@ core.Handler = AxolotlHandler
 
 
 if __name__ == "__main__":
-    print(f"Backend de entrenamiento: Axolotl {AXOLOTL_VERSION}")
+    print(
+        f"Backend de entrenamiento: Axolotl {AXOLOTL_VERSION} "
+        f"(Python {AXOLOTL_PYTHON_VERSION})"
+    )
     core.main()
