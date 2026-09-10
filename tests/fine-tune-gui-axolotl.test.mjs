@@ -20,7 +20,7 @@ test("the Axolotl GUI uses an independent process and port", () => {
   assert.match(axolotlLauncher, /trainer\/gui_server_axolotl\.py/);
   assert.match(axolotlServer, /\.venv-axolotl/);
   assert.match(axolotlServer, /train-adapter-axolotl\.sh/);
-  assert.match(axolotlServer, /Backend: Axolotl/);
+  assert.match(axolotlServer, /Backend de entrenamiento: Axolotl/);
 });
 
 test("Axolotl environment is pinned to Python 3.12 and does not require DeepSpeed", () => {
