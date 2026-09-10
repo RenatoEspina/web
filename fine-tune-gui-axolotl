@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+HOST=127.0.0.1
+PORT=${FINE_TUNE_AXOLOTL_GUI_PORT:-3032}
+URL="http://${HOST}:${PORT}"
+RUNTIME_DIR="$ROOT/.runtime"
+PID_FILE="$RUNTIME_DIR/fine-tune-gui-axolotl.pid"
+LOG_FILE="$RUNTIME_DIR/fine-tune-gui-axolotl.log"
+
+mkdir -p "$RUNTIME_DIR"
+
+open_browser() {
+  if command -v xdg-open >/dev/null 2>&1; then
+    xdg-open "$URL" >/dev/null 2>&1 || true
+  elif command -v gio >/dev/null 2>&1; then
+    gio open "$URL" >/dev/null 2>&1 || true
+  else
+    printf 'Abre %s en tu navegador.\n' "$URL"
+  fi
+}
+
+install_desktop_launcher() {
+  [[ -n "${HOME:-}" ]] || return 0
+  local app_dir="$HOME/.local/share/applications"
+  local desktop="$app_dir/llm-bridge-fine-tune-axolotl.desktop"
+  mkdir -p "$app_dir"
+  cat > "$desktop" <<EOF
+[Desktop Entry]
+Type=Application
+Name=LLM Bridge Fine-tuning (Axolotl)
+Comment=Panel local de fine-tuning QLoRA con backend Axolotl
+Exec=$ROOT/fine-tune-gui-axolotl
+Terminal=false
+Categories=Development;Utility;
+StartupNotify=true
+EOF
+  chmod 600 "$desktop"
+  if command -v update-desktop-database >/dev/null 2>&1; then
+    update-desktop-database "$app_dir" >/dev/null 2>&1 || true
+  fi
+}
+
+PYTHON=""
+for candidate in python3.13 python3.12 python3.11 python3.14 python3 python; do
+  if command -v "$candidate" >/dev/null 2>&1; then
+    PYTHON=$(command -v "$candidate")
+    break
+  fi
+done
+
+if [[ -z "$PYTHON" ]]; then
+  echo "Error: se necesita Python 3 para iniciar la GUI local de Axolotl." >&2
+  exit 1
+fi
+
+if [[ -f "$ROOT/trainer/corpora/terraria/build.py" ]]; then
+  "$PYTHON" "$ROOT/trainer/corpora/terraria/build.py" >/dev/null
+fi
+if [[ -f "$ROOT/trainer/corpora/unidades/build.py" ]]; then
+  "$PYTHON" "$ROOT/trainer/corpora/unidades/build.py" >/dev/null
+fi
+
+if curl -fsS "$URL/api/health" >/dev/null 2>&1; then
+  install_desktop_launcher
+  open_browser
+  exit 0
+fi
+
+nohup "$PYTHON" "$ROOT/trainer/gui_server_axolotl.py" --host "$HOST" --port "$PORT" >>"$LOG_FILE" 2>&1 &
+pid=$!
+printf '%s\n' "$pid" > "$PID_FILE"
+
+for _ in {1..80}; do
+  if curl -fsS "$URL/api/health" >/dev/null 2>&1; then
+    install_desktop_launcher
+    open_browser
+    echo "Fine-tuning GUI Axolotl disponible en $URL"
+    echo "La GUI básica sigue disponible con ./fine-tune-gui (puerto 3031)."
+    exit 0
+  fi
+  if ! kill -0 "$pid" >/dev/null 2>&1; then
+    echo "Error: la GUI Axolotl terminó al iniciar. Revisa $LOG_FILE" >&2
+    exit 1
+  fi
+  sleep 0.25
+done
+
+echo "Error: la GUI Axolotl no respondió en $URL. Revisa $LOG_FILE" >&2
+exit 1
