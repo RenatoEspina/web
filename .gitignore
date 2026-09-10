@@ -46,6 +46,8 @@ next-env.d.ts
 /adapters/
 /trainer/datasets/
 /trainer/.venv/
+/trainer/.venv-axolotl/
+/trainer/.venv-uv-bootstrap/
 /trainer/__pycache__/
 /tests/__pycache__/
 /trainer/corpora/**/__pycache__/
