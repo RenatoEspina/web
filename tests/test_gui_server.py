@@ -277,6 +277,13 @@ class DatasetTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "dataset de evaluación"):
             gui_server.dataset_path("examples/evaluation.jsonl")
 
+    def test_validation_split_is_not_listed_or_trainable(self):
+        """Entrenar sobre la validación destruye la selección de checkpoint."""
+        names = {item["name"] for item in gui_server.list_datasets()}
+        self.assertFalse([name for name in names if name.endswith("-validation.jsonl")])
+        with self.assertRaisesRegex(ValueError, "dataset de validación"):
+            gui_server.dataset_path("datasets/demo-validation.jsonl")
+
 
 if __name__ == "__main__":
     unittest.main()

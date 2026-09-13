@@ -22,6 +22,12 @@ if [[ "$dataset" == *"unidades-training.jsonl" && ( ! -f "$dataset" || ! -f "tra
   "$python_builder" trainer/corpora/unidades/build.py
 fi
 
+if [[ "$dataset" == *"dolly-training.jsonl" && ( ! -f "$dataset" || ! -f "trainer/corpora/dolly/validation.jsonl" ) ]]; then
+  python_builder=$(command -v python3 || command -v python || true)
+  [[ -n "$python_builder" ]] || { echo "No se encontró Python para reconstruir Dolly." >&2; exit 1; }
+  "$python_builder" trainer/corpora/dolly/build.py
+fi
+
 [[ -f "$dataset" ]] || { echo "No existe el dataset '$dataset'." >&2; exit 1; }
 
 trainer_python=${FINE_TUNE_AXOLOTL_PYTHON:-trainer/.venv-axolotl/bin/python}
@@ -48,6 +54,8 @@ if [[ "$has_validation" == false ]]; then
     validation_dataset="trainer/corpora/terraria/validation.jsonl"
   elif [[ "$dataset" == *"unidades-training.jsonl" ]]; then
     validation_dataset="trainer/corpora/unidades/validation.jsonl"
+  elif [[ "$dataset" == *"dolly-training.jsonl" ]]; then
+    validation_dataset="trainer/corpora/dolly/validation.jsonl"
   elif [[ "$dataset" == *-training.jsonl ]]; then
     sibling_validation="${dataset%-training.jsonl}-validation.jsonl"
     [[ -f "$sibling_validation" ]] && validation_dataset="$sibling_validation"

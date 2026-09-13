@@ -44,6 +44,11 @@ SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 SAFE_DATASET = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,126}\.jsonl$")
 SAFE_MODEL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,255}$")
 EVALUATION_DATASETS = {"evaluation.jsonl"}
+# Un split de validación nunca debe poder seleccionarse como dataset SFT:
+# entrenarlo destruye la señal con la que se elige el checkpoint. Cubre la
+# convención hermana <nombre>-training.jsonl / <nombre>-validation.jsonl que
+# usan scripts/train-adapter.sh y trainer/mix_replay.py.
+VALIDATION_SUFFIX = "-validation.jsonl"
 DEFAULT_VLLM_IMAGE = "vllm/vllm-openai:v0.24.0"
 
 
@@ -147,6 +152,8 @@ def dataset_path(dataset_id: Any) -> Path:
         raise ValueError("Dataset fuera de las carpetas permitidas.")
     if candidate.name.casefold() in EVALUATION_DATASETS:
         raise ValueError("evaluation.jsonl es un dataset de evaluación y no se puede usar para SFT.")
+    if candidate.name.casefold().endswith(VALIDATION_SUFFIX):
+        raise ValueError("Es un dataset de validación; se conecta solo y no se puede entrenar.")
     if not candidate.is_file():
         raise ValueError("El dataset seleccionado ya no existe.")
     return candidate
@@ -167,6 +174,8 @@ def list_datasets() -> list[dict[str, Any]]:
             continue
         for path in sorted(directory.glob("*.jsonl")):
             if path.name.casefold() in EVALUATION_DATASETS:
+                continue
+            if path.name.casefold().endswith(VALIDATION_SUFFIX):
                 continue
             result.append(
                 {

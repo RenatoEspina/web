@@ -63,6 +63,11 @@ fi
 if [[ -f "$ROOT/trainer/corpora/unidades/build.py" ]]; then
   "$PYTHON" "$ROOT/trainer/corpora/unidades/build.py" >/dev/null
 fi
+if [[ -f "$ROOT/trainer/corpora/dolly/build.py" ]]; then
+  # Solo reconstruye si la fuente ya está descargada: abrir la GUI nunca debe
+  # depender de la red.
+  "$PYTHON" "$ROOT/trainer/corpora/dolly/build.py" --if-cached >/dev/null
+fi
 
 if curl -fsS "$URL/api/health" >/dev/null 2>&1; then
   install_desktop_launcher

@@ -239,6 +239,26 @@ La guía completa está en:
 - [`docs/FINE_TUNING.md`](docs/FINE_TUNING.md)
 - [`docs/FINE_TUNING_GUI.md`](docs/FINE_TUNING_GUI.md)
 
+### Corpus de control y replay
+
+`dolly-training.jsonl` es una adaptación de `databricks/databricks-dolly-15k`
+(CC BY-SA 3.0, escrito por humanos) que no enseña un dominio: sirve para
+comprobar que el pipeline produce modelos sanos antes de culpar a un corpus de
+dominio, y como datos de replay contra el olvido catastrófico.
+
+```bash
+python trainer/corpora/dolly/build.py
+
+python trainer/mix_replay.py \
+  --domain trainer/examples/terraria-training.jsonl \
+  --name terraria-dolly-mix --ratio 0.2
+```
+
+La investigación que llevó a elegirlo, el presupuesto medido para 6 GB de VRAM y
+el diagnóstico de por qué un adapter de dominio pequeño degrada el modelo están
+en [`docs/FINE_TUNING_DATASETS.md`](docs/FINE_TUNING_DATASETS.md); el detalle del
+corpus, en [`trainer/corpora/dolly/README.md`](trainer/corpora/dolly/README.md).
+
 ### CLI
 
 ```fish

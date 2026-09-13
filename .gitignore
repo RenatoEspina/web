@@ -67,3 +67,11 @@ next-env.d.ts
 /trainer/corpora/unidades/train-audit.jsonl
 /trainer/corpora/unidades/validation-eval.jsonl
 /trainer/corpora/unidades/results/
+
+# Generated Dolly artifacts. The raw source is a pinned, checksummed download
+# cached under trainer/corpora/dolly/.cache and rebuilt locally by its build.py.
+/trainer/corpora/dolly/.cache/
+/trainer/examples/dolly-training.jsonl
+/trainer/corpora/dolly/validation.jsonl
+/trainer/corpora/dolly/evaluation.jsonl
+/trainer/corpora/dolly/manifest.json
