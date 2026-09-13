@@ -238,7 +238,14 @@ def main() -> None:
         if not axolotl_cli.is_file() or not os.access(axolotl_cli, os.X_OK):
             raise RuntimeError(f"No se encontró el CLI de Axolotl junto a {os.sys.executable}")
 
-        subprocess.run([str(axolotl_cli), "train", str(config_path)], check=True)
+        # Se antepone la carpeta bin/ del venv de Axolotl al PATH para que
+        # llamadas internas como os.execvpe("accelerate", ...) resuelvan el binario.
+        env = os.environ.copy()
+        venv_bin = str(axolotl_cli.parent.resolve())
+        current_path = env.get("PATH", "")
+        env["PATH"] = f"{venv_bin}{os.pathsep}{current_path}" if current_path else venv_bin
+
+        subprocess.run([str(axolotl_cli), "train", str(config_path)], env=env, check=True)
         ensure_adapter_files(staging)
         metrics, quality_selection = collect_metrics(staging)
 

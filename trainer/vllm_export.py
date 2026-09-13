@@ -11,6 +11,7 @@ import hashlib
 import json
 import re
 import shutil
+import sys
 import tempfile
 from pathlib import Path
 
@@ -26,7 +27,7 @@ def needs_export(config: dict, manifest: dict) -> bool:
     )
 
 
-def runtime_key(key: str) -> str:
+def runtime_key(key: str, include_visual: bool = False) -> str | None:
     """Feed model.language_model.* into Qwen3.5's hf_to_vllm_mapper.
 
     vLLM v0.24.0 maps that prefix to language_model.model.*; the text-only
@@ -41,6 +42,11 @@ def runtime_key(key: str) -> str:
         return prefix + "model.language_model." + module[len("model."):]
     if module.startswith(("model.language_model.layers.", "lm_head.")):
         return key
+    if module.startswith(("model.visual.", "visual.")):
+        if not include_visual:
+            return None
+        visual_module = module[len("model."):] if module.startswith("model.") else module
+        return prefix + visual_module
     raise ValueError(f"Namespace Qwen3.5 desconocido; no se cargará silenciosamente: {key}")
 
 
@@ -80,7 +86,7 @@ def validate_export(destination: Path) -> dict:
     return metadata
 
 
-def export_adapter(directory: Path) -> Path:
+def export_adapter(directory: Path, include_visual: bool = False) -> Path:
     config, manifest = read_config(directory)
     safe_file(directory / "adapter_model.safetensors")
     if not needs_export(config, manifest):
@@ -101,13 +107,15 @@ def export_adapter(directory: Path) -> Path:
     renamed = 0
     with safe_open(str(directory / "adapter_model.safetensors"), framework="pt", device="cpu") as source:
         for key in source.keys():
-            new_key = runtime_key(key)
+            new_key = runtime_key(key, include_visual=include_visual)
+            if new_key is None:
+                continue
             if new_key in tensors:
                 raise ValueError(f"Colisión de nombres LoRA: {new_key}")
             tensors[new_key] = source.get_tensor(key)
             renamed += int(new_key != key)
     if not tensors:
-        raise ValueError("El adaptador no contiene tensores.")
+        raise ValueError("El adaptador no contiene tensores compatibles con el modelo de lenguaje de vLLM.")
     for key in tensors:
         counterpart = key.replace(".lora_A.weight", ".lora_B.weight") if key.endswith(".lora_A.weight") else key.replace(".lora_B.weight", ".lora_A.weight")
         if counterpart not in tensors:
@@ -140,6 +148,11 @@ def export_adapter(directory: Path) -> Path:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("adapter", type=Path)
+    parser.add_argument(
+        "--include-visual",
+        action="store_true",
+        help="Intentar mapear capas visuales en lugar de omitirlas (vLLM suele soportar únicamente LoRA de texto)",
+    )
     args = parser.parse_args()
-    output = export_adapter(args.adapter.absolute())
+    output = export_adapter(args.adapter.absolute(), include_visual=args.include_visual)
     print(json.dumps({"vllmExport": str(output), "originalPreserved": True}))
