@@ -31,6 +31,15 @@ if [[ "$dataset" == *"unidades-training.jsonl" && ( ! -f "$dataset" || ! -f "tra
   "$python_builder" trainer/corpora/unidades/build.py
 fi
 
+if [[ "$dataset" == *"dolly-training.jsonl" && ( ! -f "$dataset" || ! -f "trainer/corpora/dolly/validation.jsonl" ) ]]; then
+  python_builder=$(command -v python3 || command -v python || true)
+  if [[ -z "$python_builder" ]]; then
+    echo "No se encontró Python para reconstruir el corpus Dolly." >&2
+    exit 1
+  fi
+  "$python_builder" trainer/corpora/dolly/build.py
+fi
+
 if [[ ! -f "$dataset" ]]; then
   echo "No existe el dataset '$dataset'." >&2
   exit 1
@@ -77,6 +86,8 @@ if [[ "$has_validation" == false ]]; then
     validation_dataset="trainer/corpora/terraria/validation.jsonl"
   elif [[ "$dataset" == *"unidades-training.jsonl" ]]; then
     validation_dataset="trainer/corpora/unidades/validation.jsonl"
+  elif [[ "$dataset" == *"dolly-training.jsonl" ]]; then
+    validation_dataset="trainer/corpora/dolly/validation.jsonl"
   elif [[ "$dataset" == *-training.jsonl ]]; then
     sibling_validation="${dataset%-training.jsonl}-validation.jsonl"
     if [[ -f "$sibling_validation" ]]; then

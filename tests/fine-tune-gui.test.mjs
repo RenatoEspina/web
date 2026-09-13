@@ -71,6 +71,12 @@ test("evaluation.jsonl se identifica como evaluación y no se ofrece para SFT", 
   assert.match(server, /if path\.name\.casefold\(\) in EVALUATION_DATASETS:\s+continue/);
 });
 
+test("un split de validación no se lista ni se puede entrenar", () => {
+  assert.match(server, /VALIDATION_SUFFIX = "-validation\.jsonl"/);
+  assert.match(server, /if path\.name\.casefold\(\)\.endswith\(VALIDATION_SUFFIX\):\s+continue/);
+  assert.match(server, /Es un dataset de validación; se conecta solo y no se puede entrenar/);
+});
+
 test("entrenamiento y vLLM preparan adapters sin borrar su contenido", () => {
   assert.equal((server.match(/ensure_adapter_dir_writable\(job\)/g) || []).length, 4);
   assert.match(server, /docker,[\s\S]+"run",[\s\S]+"--rm",[\s\S]+"--user",[\s\S]+"0:0"/);
