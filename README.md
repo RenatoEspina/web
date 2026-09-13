@@ -180,7 +180,7 @@ El índice es temporal y vive en memoria. Reiniciar el gateway elimina documento
 El perfil actual de vLLM está orientado al entorno de investigación y usa, por defecto:
 
 ```text
-vllm/vllm-openai:v0.24.0
+vllm/vllm-openai:v0.29.0
 GPU memory utilization: 0.80
 max model len: 4096
 max num seqs: 1

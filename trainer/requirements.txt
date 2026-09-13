@@ -1,7 +1,9 @@
-accelerate==1.14.0
+accelerate==1.15.0
 bitsandbytes==0.50.2
+# datasets 5.x rompe el fingerprinting con Python 3.14 (_Pickler._batch_setitems);
+# 4.8.5 es la última serie que sí serializa las tablas Arrow de TRL.
 datasets==4.8.5
 peft==0.20.0
 safetensors==0.8.0
-transformers==5.16.1
-trl==1.11.0
+transformers==5.17.0
+trl==1.13.0

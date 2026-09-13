@@ -84,6 +84,36 @@ test("los modelos Terraria mantienen filtro duro con clasificación determinista
   assert.match(chatRoute, /withMasterPrompt\(knowledgeMessages, selectedModel\)/);
 });
 
+test("un adapter entrenado sobre varias tareas no hereda el alcance por nombre", () => {
+  // El gate de Terraria se disparaba solo por el nombre del modelo, así que un
+  // adapter de dominio + replay llamado terraria-mix-* veía rechazada toda
+  // pregunta general antes de ejecutarse. La decisión ahora sale del manifest.
+  assert.match(masterPrompt, /function trainedAcrossTasks\(model: string\): boolean/);
+  assert.match(masterPrompt, /serving\.systemPrompt == null/);
+
+  const configured = masterPrompt.indexOf("configuredTerrariaModels().has(model)");
+  const acrossTasks = masterPrompt.indexOf("trainedAcrossTasks(model)", configured);
+  const pattern = masterPrompt.indexOf("TERRARIA_MODEL_PATTERN.test(model)", acrossTasks);
+
+  // Orden obligatorio: configuración explícita del operador, luego la evidencia
+  // del manifest, y el patrón por nombre solo como último recurso.
+  assert.ok(configured >= 0);
+  assert.ok(acrossTasks > configured);
+  assert.ok(pattern > acrossTasks);
+  assert.match(masterPrompt, /if \(configuredTerrariaModels\(\)\.has\(model\)\) return true;/);
+  assert.match(masterPrompt, /if \(trainedAcrossTasks\(model\)\) return false;/);
+});
+
+test("el manifest del adapter se lee una sola vez para prompt y alcance", () => {
+  assert.match(masterPrompt, /adapterManifestCache = new Map<string, AdapterManifest \| null>\(\)/);
+  assert.match(masterPrompt, /function adapterManifest\(model: string\): AdapterManifest \| null/);
+  // Ambos consumidores comparten la misma lectura y los mismos límites de ruta.
+  assert.match(masterPrompt, /const serving = adapterManifest\(model\)\?\.serving;/);
+  assert.match(masterPrompt, /const manifest = adapterManifest\(model\);/);
+  assert.match(masterPrompt, /SAFE_ADAPTER_NAME\.test\(model\)/);
+  assert.match(masterPrompt, /pathInside\(adaptersRoot, manifestPath\)/);
+});
+
 test("los providers respetan overrides sin cambiar defaults globales", () => {
   assert.match(llmTypes, /interface CompletionOptions/);
   assert.match(llmIndex, /options\?: CompletionOptions/);

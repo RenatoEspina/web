@@ -15,16 +15,16 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: 26
           cache: npm
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.14"
 
@@ -33,6 +33,14 @@ jobs:
 
       - name: Install Node dependencies
         run: npm ci
+
+      # Materializa el corpus Dolly para que sus tests de integración corran de
+      # verdad. Si Hugging Face no responde, el paso se salta y los tests
+      # marcados con skipUnless se saltan solos: no se convierte en un fallo de
+      # CI por una caída ajena al repositorio.
+      - name: Build the Dolly control corpus (best effort)
+        continue-on-error: true
+        run: python trainer/corpora/dolly/build.py
 
       - name: Verify
         run: npm run verify

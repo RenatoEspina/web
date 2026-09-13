@@ -26,8 +26,24 @@ class NamespaceTests(unittest.TestCase):
             self.assertEqual(vllm_export.runtime_key(key), key)
 
     def test_unknown_namespace_fails_closed(self):
-        with self.assertRaisesRegex(ValueError, "Namespace"):
-            vllm_export.runtime_key("base_model.model.visual.q_proj.lora_A.weight")
+        """Un namespace que la exportación no conoce nunca se descarta en silencio."""
+        for key in ("base_model.model.audio_tower.q_proj.lora_A.weight",
+                    "base_model.model.encoder.layers.0.q_proj.lora_B.weight",
+                    "model.decoder.layers.0.self_attn.q_proj.lora_A.weight"):
+            with self.subTest(key=key):
+                with self.assertRaisesRegex(ValueError, "Namespace"):
+                    vllm_export.runtime_key(key)
+
+    def test_visual_layers_are_skipped_unless_explicitly_requested(self):
+        """visual sí es un namespace conocido: se omite porque vLLM sirve solo texto."""
+        key = "base_model.model.visual.q_proj.lora_A.weight"
+        self.assertIsNone(vllm_export.runtime_key(key))
+        self.assertEqual(vllm_export.runtime_key(key, include_visual=True),
+                         "base_model.model.visual.q_proj.lora_A.weight")
+
+    def test_non_lora_tensors_are_rejected(self):
+        with self.assertRaisesRegex(ValueError, "no compatible"):
+            vllm_export.runtime_key("base_model.model.model.layers.0.self_attn.q_proj.weight")
 
     def test_only_qwen35_is_selected_including_legacy_manifests(self):
         self.assertTrue(vllm_export.needs_export({"base_model_name_or_path": "Qwen/Qwen3.5-0.8B"}, {}))

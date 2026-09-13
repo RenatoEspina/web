@@ -1,6 +1,6 @@
 services:
   vllm:
-    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.24.0}
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:v0.29.0}
     ports:
       - "127.0.0.1:8000:8000"
     environment:
@@ -33,8 +33,12 @@ services:
       # el límite de salida con razonamiento oculto.
       - --default-chat-template-kwargs
       - '{"enable_thinking":false}'
+      # 0.80 fallaba al arrancar en cuanto el escritorio usaba VRAM: vLLM ve
+      # 5.66 GiB utilizables de los 6 GiB y exigía 4.53 GiB con ~4.19 libres.
+      # 0.70 deja sitio al compositor y al navegador sin recortar de verdad el
+      # KV cache, que para un 0.8B con max-model-len 4096 va sobrado.
       - --gpu-memory-utilization
-      - "${VLLM_GPU_MEMORY_UTILIZATION:-0.80}"
+      - "${VLLM_GPU_MEMORY_UTILIZATION:-0.70}"
       - --max-model-len
       - "${VLLM_MAX_MODEL_LEN:-4096}"
       # Una sola solicitud evita que varias peticiones agoten la VRAM.

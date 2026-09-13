@@ -49,7 +49,7 @@ EVALUATION_DATASETS = {"evaluation.jsonl"}
 # convención hermana <nombre>-training.jsonl / <nombre>-validation.jsonl que
 # usan scripts/train-adapter.sh y trainer/mix_replay.py.
 VALIDATION_SUFFIX = "-validation.jsonl"
-DEFAULT_VLLM_IMAGE = "vllm/vllm-openai:v0.24.0"
+DEFAULT_VLLM_IMAGE = "vllm/vllm-openai:v0.29.0"
 
 
 @dataclass

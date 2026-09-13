@@ -9,6 +9,7 @@ const SAFE_ADAPTER_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 const MAX_SCOPE_HISTORY_ITEMS = 8;
 const MAX_SCOPE_MESSAGE_CHARS = 1_500;
 const adapterPromptCache = new Map<string, string | null>();
+const adapterManifestCache = new Map<string, AdapterManifest | null>();
 
 export const TERRARIA_OUT_OF_SCOPE_MESSAGE = "Solo puedo responder preguntas relacionadas con Terraria.";
 
@@ -38,8 +39,50 @@ function configuredTerrariaModels(): Set<string> {
   );
 }
 
+type AdapterManifest = {
+  dataset?: unknown;
+  serving?: { systemPrompt?: unknown; systemPromptSource?: unknown };
+};
+
+function adapterManifest(model: string): AdapterManifest | null {
+  if (adapterManifestCache.has(model)) return adapterManifestCache.get(model) ?? null;
+
+  let manifest: AdapterManifest | null = null;
+  if (SAFE_ADAPTER_NAME.test(model)) {
+    const adaptersRoot = resolve(process.cwd(), "adapters");
+    const manifestPath = resolve(join(adaptersRoot, model, "manifest.json"));
+    if (pathInside(adaptersRoot, manifestPath)) {
+      try {
+        manifest = JSON.parse(readFileSync(manifestPath, "utf-8")) as AdapterManifest;
+      } catch {
+        manifest = null;
+      }
+    }
+  }
+  adapterManifestCache.set(model, manifest);
+  return manifest;
+}
+
+/**
+ * El trainer escribe siempre `serving`, y deja `systemPrompt` en null cuando el
+ * SFT no compartió un único system prompt: es decir, cuando el adapter se
+ * entrenó a propósito sobre más de una tarea (por ejemplo dominio + replay).
+ *
+ * Ese caso es prueba de que el adapter NO es de un solo dominio, así que el
+ * patrón por nombre no debe forzarle el alcance de Terraria. Un manifest sin
+ * `serving` es de un adapter anterior a ese campo: ahí no hay evidencia y se
+ * conserva el comportamiento por nombre.
+ */
+function trainedAcrossTasks(model: string): boolean {
+  const serving = adapterManifest(model)?.serving;
+  return typeof serving === "object" && serving !== null && serving.systemPrompt == null;
+}
+
 export function isTerrariaModel(model: string): boolean {
-  return configuredTerrariaModels().has(model) || TERRARIA_MODEL_PATTERN.test(model);
+  // La configuración explícita del operador gana sobre cualquier inferencia.
+  if (configuredTerrariaModels().has(model)) return true;
+  if (trainedAcrossTasks(model)) return false;
+  return TERRARIA_MODEL_PATTERN.test(model);
 }
 
 function pathInside(parent: string, candidate: string): boolean {
@@ -91,35 +134,21 @@ function commonDatasetSystemPrompt(datasetPath: string): string | null {
 
 function adapterSystemPrompt(model: string): string | null {
   if (adapterPromptCache.has(model)) return adapterPromptCache.get(model) ?? null;
-  if (!SAFE_ADAPTER_NAME.test(model)) {
+
+  const manifest = adapterManifest(model);
+  if (!manifest) {
     adapterPromptCache.set(model, null);
     return null;
   }
 
-  const adaptersRoot = resolve(process.cwd(), "adapters");
-  const manifestPath = resolve(join(adaptersRoot, model, "manifest.json"));
-  if (!pathInside(adaptersRoot, manifestPath)) {
-    adapterPromptCache.set(model, null);
-    return null;
-  }
-
-  try {
-    const manifest = JSON.parse(readFileSync(manifestPath, "utf-8")) as {
-      dataset?: unknown;
-      serving?: { systemPrompt?: unknown };
-    };
-    const persisted = manifest.serving?.systemPrompt;
-    const prompt = typeof persisted === "string" && persisted.trim()
-      ? persisted.trim()
-      : typeof manifest.dataset === "string"
-        ? commonDatasetSystemPrompt(manifest.dataset)
-        : null;
-    adapterPromptCache.set(model, prompt);
-    return prompt;
-  } catch {
-    adapterPromptCache.set(model, null);
-    return null;
-  }
+  const persisted = manifest.serving?.systemPrompt;
+  const prompt = typeof persisted === "string" && persisted.trim()
+    ? persisted.trim()
+    : typeof manifest.dataset === "string"
+      ? commonDatasetSystemPrompt(manifest.dataset)
+      : null;
+  adapterPromptCache.set(model, prompt);
+  return prompt;
 }
 
 export function terrariaScopeMessages(messages: ChatMessage[]): ChatMessage[] {

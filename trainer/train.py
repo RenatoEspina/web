@@ -32,6 +32,23 @@ from training_quality import (
 
 SAFE_NAME = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$")
 
+# Qwen3.5 es híbrido: de sus 24 capas solo 6 son atención completa y 18 son
+# atención lineal de estado recurrente. En esas capas `in_proj_a` e `in_proj_b`
+# no son proyecciones corrientes: producen el decaimiento y la puerta que
+# gobiernan el estado recurrente. Entrenar LoRA sobre ellas desestabiliza esa
+# recurrencia y la generación degenera en bucles de repetición, aunque el
+# eval_loss con teacher forcing mejore.
+#
+# `attention-mlp` es el conjunto clásico de LoRA: cubre el MLP de las 24 capas y
+# la atención de las 6 completas, sin tocar ninguna puerta de estado.
+TARGET_MODULE_PRESETS = {
+    "attention-mlp": [
+        "q_proj", "k_proj", "v_proj", "o_proj",
+        "gate_proj", "up_proj", "down_proj",
+    ],
+    "all-linear": "all-linear",
+}
+
 
 def arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Fine-tuning SFT con QLoRA para LLM Bridge")
@@ -45,6 +62,15 @@ def arguments() -> argparse.Namespace:
         help="Revisión o commit inmutable del modelo en Hugging Face; opcional para rutas locales.",
     )
     parser.add_argument("--rank", type=int, choices=(8, 16, 32), default=16)
+    parser.add_argument(
+        "--target-modules",
+        choices=tuple(TARGET_MODULE_PRESETS),
+        default="attention-mlp",
+        help=(
+            "Qué proyecciones recibe LoRA. 'attention-mlp' evita las puertas de estado "
+            "de las capas de atención lineal; 'all-linear' las incluye."
+        ),
+    )
     parser.add_argument("--alpha", type=int, default=32)
     parser.add_argument("--dropout", type=float, default=0.05)
     parser.add_argument("--epochs", type=float, default=2.0)
@@ -389,7 +415,7 @@ def main() -> None:
             lora_dropout=args.dropout,
             bias="none",
             task_type="CAUSAL_LM",
-            target_modules="all-linear",
+            target_modules=TARGET_MODULE_PRESETS[args.target_modules],
         )
         use_validation = validation_dataset is not None
         config = SFTConfig(
@@ -515,7 +541,8 @@ def main() -> None:
                 "rank": args.rank,
                 "alpha": args.alpha,
                 "dropout": args.dropout,
-                "targetModules": "all-linear",
+                "targetModules": args.target_modules,
+                "targetModuleSuffixes": TARGET_MODULE_PRESETS[args.target_modules],
                 "assistantOnlyLoss": True,
                 "epochs": args.epochs,
                 "learningRate": args.learning_rate,
