@@ -80,7 +80,7 @@ test("un split de validación no se lista ni se puede entrenar", () => {
 test("entrenamiento y vLLM preparan adapters sin borrar su contenido", () => {
   assert.equal((server.match(/ensure_adapter_dir_writable\(job\)/g) || []).length, 4);
   assert.match(server, /docker,[\s\S]+"run",[\s\S]+"--rm",[\s\S]+"--user",[\s\S]+"0:0"/);
-  assert.match(server, /DEFAULT_VLLM_IMAGE = "vllm\/vllm-openai:v0\.24\.0"/);
+  assert.match(server, /DEFAULT_VLLM_IMAGE = "vllm\/vllm-openai:v0\.29\.0"/);
   assert.match(server, /"--entrypoint",\s+"\/bin\/sh"/);
   assert.match(server, /chown -R \{os\.getuid\(\)\}:\{os\.getgid\(\)\} \/adapters && chmod -R u\+rwX \/adapters/);
   assert.match(server, /owner=\{owner\}:\{group\}.*mode=\{mode\}/);
@@ -121,11 +121,14 @@ test("la GUI hace visible la compatibilidad y actualización del entorno", () =>
 });
 
 test("el stack de fine-tuning soporta oficialmente Qwen3.5 y Python 3.14", () => {
-  assert.match(requirements, /^transformers==5\.16\.1$/m);
-  assert.match(requirements, /^trl==1\.11\.0$/m);
+  assert.match(requirements, /^transformers==5\.17\.0$/m);
+  assert.match(requirements, /^trl==1\.13\.0$/m);
   assert.match(requirements, /^peft==0\.20\.0$/m);
-  assert.match(requirements, /^accelerate==1\.14\.0$/m);
+  assert.match(requirements, /^accelerate==1\.15\.0$/m);
   assert.match(requirements, /^safetensors==0\.8\.0$/m);
+  // datasets sigue en 4.x a propósito: la serie 5 no serializa las tablas Arrow
+  // de TRL bajo Python 3.14 y aborta el entrenamiento al preparar el dataset.
+  assert.match(requirements, /^datasets==4\.8\.5$/m);
   assert.match(dependencyCheck, /"qwen3_5" not in CONFIG_MAPPING/);
   assert.match(dependencyCheck, /Qwen3_5ForCausalLM/);
 });

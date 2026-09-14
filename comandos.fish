@@ -358,7 +358,7 @@ function start_vllm
     set -gx HF_TOKEN $HF_TOKEN
 
     if not set -q VLLM_IMAGE
-        set -gx VLLM_IMAGE "vllm/vllm-openai:v0.24.0"
+        set -gx VLLM_IMAGE "vllm/vllm-openai:v0.29.0"
     end
 
     require_command curl

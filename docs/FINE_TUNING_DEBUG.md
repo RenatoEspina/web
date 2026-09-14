@@ -155,7 +155,43 @@ jq -r '.messages[-1].content | length' trainer/datasets/<dataset>.jsonl \
 
 Si casi todas las respuestas del assistant son muy cortas, el LoRA puede aprender a emitir EOS pronto aunque el contenido sea correcto.
 
-## 8. Criterio para decidir la causa
+## 8. Descartar que LoRA esté tocando las puertas de estado
+
+Si el adapter genera bucles de repetición —la respuesta empieza bien y acaba
+repitiendo la misma secuencia hasta agotar `max_tokens`— la causa probable no
+son los hiperparámetros, sino **qué proyecciones recibió LoRA**.
+
+Qwen3.5 es híbrido: de sus 24 capas solo 6 son atención completa y 18 son
+atención lineal de estado recurrente. En esas 18, `in_proj_a` e `in_proj_b` no
+son proyecciones corrientes: producen el decaimiento y la puerta que gobiernan
+el estado. `target_modules="all-linear"` las incluye, y perturbarlas desestabiliza
+la recurrencia.
+
+Medido en este repositorio con el mismo dataset, los mismos hiperparámetros, el
+mismo seed y temperatura 0, cambiando solo `--target-modules`:
+
+| `--target-modules` | módulos LoRA | mejora de `eval_loss` | palabras únicas en las últimas 60 generadas |
+| --- | --- | --- | --- |
+| `all-linear` | 186 | 23.4 % | **3 / 60** |
+| `attention-mlp` | 96 | 22.6 % | **39 / 60** |
+
+Lo importante de esa tabla es la penúltima columna: **`eval_loss` mejora casi
+igual en los dos casos**. La pérdida se mide con teacher forcing, así que no ve
+la degeneración, que solo aparece en generación libre. Ninguna métrica del
+entrenamiento te avisa de esto.
+
+`attention-mlp` es el valor por defecto desde entonces. Cubre el MLP de las 24
+capas y la atención de las 6 completas, sin tocar ninguna puerta de estado.
+Comprueba qué usó un adapter ya entrenado:
+
+```bash
+jq '.parameters.targetModules, .parameters.targetModuleSuffixes' adapters/NOMBRE/manifest.json
+```
+
+Un adapter entrenado antes de este cambio dirá `all-linear`; reentrénalo antes
+de seguir diagnosticando otra cosa.
+
+## 9. Criterio para decidir la causa
 
 Antes de tocar hiperparámetros, reúne para la misma pregunta:
 

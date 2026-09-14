@@ -12,6 +12,19 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Artefactos de build y de runtime. Estaban solo en --ignore-pattern del
+    // script npm, así que cualquier invocación directa de eslint los recorría.
+    "dist/**",
+    ".wrangler/**",
+    ".sites-runtime/**",
+    ".runtime/**",
+    "outputs/**",
+    "work/**",
+    // Los entornos Python traen su propio JavaScript empaquetado: gradio solo
+    // aporta ~900 archivos, con bundles de mermaid, cytoscape y babylon que
+    // revientan la memoria de eslint. Nada de esto es código del proyecto.
+    "trainer/.venv*/**",
+    "adapters/**",
   ]),
   {
     files: ["components/ui/**/*.{ts,tsx}", "hooks/use-mobile.ts"],

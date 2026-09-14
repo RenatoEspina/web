@@ -30,7 +30,8 @@ def needs_export(config: dict, manifest: dict) -> bool:
 def runtime_key(key: str, include_visual: bool = False) -> str | None:
     """Feed model.language_model.* into Qwen3.5's hf_to_vllm_mapper.
 
-    vLLM v0.24.0 maps that prefix to language_model.model.*; the text-only
+    vLLM maps that prefix to language_model.model.* (checked on v0.24.0 and
+    re-checked on v0.29.0); the text-only
     Transformers model saves model.layers.* instead. Already-qualified keys
     and lm_head retain their names. No broad substring replacements.
     """
