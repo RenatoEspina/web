@@ -26,6 +26,7 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+import runtime_lock
 from dataset_validation import load_jsonl
 from vllm_export import export_destination, needs_export, read_config, validate_export
 
@@ -50,6 +51,12 @@ EVALUATION_DATASETS = {"evaluation.jsonl"}
 # usan scripts/train-adapter.sh y trainer/mix_replay.py.
 VALIDATION_SUFFIX = "-validation.jsonl"
 DEFAULT_VLLM_IMAGE = "vllm/vllm-openai:v0.29.0"
+# Cancelación escalonada sobre el grupo de procesos del job: SIGINT, espera,
+# SIGTERM, espera y SIGKILL. Si un proceso desacoplado conserva el stdout, el
+# job se da por cancelado tras CANCEL_OUTPUT_DRAIN_SECONDS sin esperar su EOF.
+CANCEL_SIGINT_GRACE_SECONDS = 10.0
+CANCEL_SIGTERM_GRACE_SECONDS = 5.0
+CANCEL_OUTPUT_DRAIN_SECONDS = 2.0
 
 
 @dataclass
@@ -64,6 +71,7 @@ class Job:
     process: subprocess.Popen[str] | None = None
     cancel_requested: bool = False
     result: dict[str, Any] | None = None
+    gpu_lock: runtime_lock.GpuLock | None = None
 
 
 STATE_LOCK = threading.Lock()
@@ -73,6 +81,22 @@ CSRF_TOKEN = secrets.token_urlsafe(32)
 
 class JobCancelled(RuntimeError):
     pass
+
+
+def gpu_lock_path() -> Path:
+    return RUNTIME_DIR / runtime_lock.LOCK_FILENAME
+
+
+def job_record_path() -> Path:
+    return RUNTIME_DIR / runtime_lock.JOB_RECORD_FILENAME
+
+
+def external_job_message(record: dict[str, Any]) -> str:
+    return (
+        "Hay una operación de GPU/vLLM en curso fuera de este panel "
+        f"(acción {record.get('action') or 'desconocida'}, PGID {record['pgid']}). "
+        "Espera a que termine o detenla antes de iniciar otra."
+    )
 
 
 def trainer_python() -> Path:
@@ -332,7 +356,18 @@ def status_payload() -> dict[str, Any]:
         "datasets": list_datasets(),
         "adapters": list_adapters(),
         "job": job,
+        "externalJob": external_job_snapshot(),
     }
+
+
+def external_job_snapshot() -> dict[str, Any] | None:
+    """Job vivo registrado por otro proceso, sin modificar el registro."""
+    record = runtime_lock.live_job_record(job_record_path(), remove_stale=False)
+    with STATE_LOCK:
+        own_process = CURRENT_JOB.process if CURRENT_JOB is not None else None
+    if record is None or (own_process is not None and record.get("pgid") == own_process.pid):
+        return None
+    return {"action": record.get("action"), "pgid": record["pgid"], "startedAt": record.get("startedAt")}
 
 
 def append_log(job: Job, line: str) -> None:
@@ -340,6 +375,30 @@ def append_log(job: Job, line: str) -> None:
     if clean:
         with STATE_LOCK:
             job.logs.append(clean)
+
+
+def _pump_output(job: Job, stream: Any) -> None:
+    for line in stream:
+        append_log(job, line)
+
+
+def _wait_for_output(job: Job, reader: threading.Thread) -> None:
+    """Espera el EOF del stdout; tras una cancelación, solo un margen acotado."""
+    while True:
+        reader.join(0.2)
+        if not reader.is_alive():
+            return
+        with STATE_LOCK:
+            cancelled = job.cancel_requested
+        if cancelled:
+            reader.join(CANCEL_OUTPUT_DRAIN_SECONDS)
+            if reader.is_alive():
+                append_log(
+                    job,
+                    "Un subproceso desacoplado mantiene abierta la salida; "
+                    "la operación se da por cancelada sin esperar su cierre.",
+                )
+            return
 
 
 def run_command(
@@ -353,6 +412,13 @@ def run_command(
         raise JobCancelled()
     if label:
         append_log(job, f"\n== {label} ==")
+    child_env = dict(os.environ if env is None else env)
+    pass_fds: tuple[int, ...] = ()
+    if job.gpu_lock is not None and job.gpu_lock.fd is not None:
+        # El hijo hereda el lock de GPU/vLLM: los scripts de entrenamiento lo
+        # reconocen y un proceso que sobreviva al panel lo sigue reteniendo.
+        child_env[runtime_lock.LOCK_FD_ENV] = str(job.gpu_lock.fd)
+        pass_fds = (job.gpu_lock.fd,)
     process = subprocess.Popen(
         command,
         cwd=ROOT,
@@ -360,15 +426,37 @@ def run_command(
         stderr=subprocess.STDOUT,
         text=True,
         bufsize=1,
-        env=env,
+        env=child_env,
         start_new_session=True,
+        pass_fds=pass_fds,
     )
+    if job.gpu_lock is not None:
+        try:
+            runtime_lock.write_job_record(job_record_path(), {
+                "pgid": process.pid,
+                "pid": process.pid,
+                "action": job.action,
+                "jobId": job.id,
+                "guiPid": os.getpid(),
+                "bootId": runtime_lock.boot_id(),
+                "startedAt": time.time(),
+            })
+        except OSError as error:
+            append_log(job, f"Aviso: no se pudo registrar el PGID del job en {RUNTIME_DIR}: {error}")
     with STATE_LOCK:
         job.process = process
+        cancel_pending = job.cancel_requested
+    if cancel_pending:
+        start_cancel_escalation(job, process)
     assert process.stdout is not None
-    for line in process.stdout:
-        append_log(job, line)
-    returncode = process.wait()
+    reader = threading.Thread(target=_pump_output, args=(job, process.stdout), daemon=True)
+    reader.start()
+    try:
+        returncode = process.wait()
+        _wait_for_output(job, reader)
+    finally:
+        if job.gpu_lock is not None:
+            runtime_lock.remove_job_record(job_record_path(), process.pid)
     with STATE_LOCK:
         job.process = None
         job.returncode = returncode
@@ -803,6 +891,9 @@ def job_worker(job: Job, payload: dict[str, Any]) -> None:
         with STATE_LOCK:
             job.finished_at = time.time()
             job.process = None
+            gpu_lock = job.gpu_lock
+        if gpu_lock is not None:
+            gpu_lock.release()
 
 
 def start_job(action: str, payload: dict[str, Any]) -> Job:
@@ -813,10 +904,51 @@ def start_job(action: str, payload: dict[str, Any]) -> Job:
     with STATE_LOCK:
         if CURRENT_JOB is not None and CURRENT_JOB.status == "running":
             raise RuntimeError("Ya hay una operación en curso.")
-        job = Job(id=uuid.uuid4().hex, action=action)
+        external = runtime_lock.live_job_record(job_record_path())
+        if external is not None:
+            raise RuntimeError(external_job_message(external))
+        # GpuLockBusy es un RuntimeError: el handler lo responde como 409.
+        gpu_lock = runtime_lock.GpuLock.acquire(gpu_lock_path())
+        job = Job(id=uuid.uuid4().hex, action=action, gpu_lock=gpu_lock)
         CURRENT_JOB = job
     threading.Thread(target=job_worker, args=(job, payload), daemon=True).start()
     return job
+
+
+def escalate_cancellation(job: Job, process: subprocess.Popen[str]) -> None:
+    """SIGINT, SIGTERM y SIGKILL al grupo del job hasta que no quede ningún proceso."""
+    pgid = process.pid  # start_new_session=True: el hijo lidera su propio grupo.
+    steps = (
+        (signal.SIGINT, CANCEL_SIGINT_GRACE_SECONDS),
+        (signal.SIGTERM, CANCEL_SIGTERM_GRACE_SECONDS),
+        (signal.SIGKILL, 0.0),
+    )
+    for index, (signum, grace) in enumerate(steps):
+        if not runtime_lock.process_group_alive(pgid):
+            return
+        if index == 0:
+            append_log(job, f"Cancelación solicitada: enviando SIGINT al grupo de procesos {pgid}.")
+        else:
+            append_log(
+                job,
+                f"El grupo {pgid} sigue activo tras {steps[index - 1][1]:g} s; enviando {signum.name}.",
+            )
+        try:
+            os.killpg(pgid, signum)
+        except ProcessLookupError:
+            return
+        except PermissionError as error:
+            append_log(job, f"No se pudo enviar {signum.name} al grupo {pgid}: {error}")
+            return
+        deadline = time.monotonic() + grace
+        while time.monotonic() < deadline:
+            if not runtime_lock.process_group_alive(pgid):
+                return
+            time.sleep(0.05)
+
+
+def start_cancel_escalation(job: Job, process: subprocess.Popen[str]) -> None:
+    threading.Thread(target=escalate_cancellation, args=(job, process), daemon=True).start()
 
 
 def cancel_job() -> bool:
@@ -824,14 +956,45 @@ def cancel_job() -> bool:
         job = CURRENT_JOB
         if job is None or job.status != "running":
             return False
+        already_requested = job.cancel_requested
         job.cancel_requested = True
         process = job.process
-    if process is not None and process.poll() is None:
-        try:
-            os.killpg(os.getpgid(process.pid), signal.SIGINT)
-        except ProcessLookupError:
-            pass
+    if process is not None and not already_requested:
+        start_cancel_escalation(job, process)
     return True
+
+
+def stop_running_job() -> None:
+    """Cancela y espera el job activo antes de que el panel termine."""
+    with STATE_LOCK:
+        job = CURRENT_JOB
+        running = job is not None and job.status == "running"
+    if not running or job is None:
+        return
+    print("Cancelando la operación en curso antes de cerrar el panel…", flush=True)
+    cancel_job()
+    limit = CANCEL_SIGINT_GRACE_SECONDS + CANCEL_SIGTERM_GRACE_SECONDS + CANCEL_OUTPUT_DRAIN_SECONDS + 5.0
+    deadline = time.monotonic() + limit
+    while time.monotonic() < deadline:
+        with STATE_LOCK:
+            if job.status != "running":
+                return
+        time.sleep(0.1)
+    print("Aviso: la operación no terminó a tiempo; revisa los procesos manualmente.", flush=True)
+
+
+def report_external_job() -> None:
+    """Comprueba al arrancar si quedó vivo el job de una sesión anterior."""
+    record = runtime_lock.live_job_record(job_record_path())
+    if record is not None:
+        print(
+            f"Aviso: {external_job_message(record)} Para detenerla: kill -INT -- -{record['pgid']}",
+            flush=True,
+        )
+
+
+def _exit_on_signal(signum: int, _frame: Any) -> None:
+    raise SystemExit(128 + signum)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -974,6 +1137,12 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"cancelled": cancelled}, 200 if cancelled else 409)
                 return
             if path == "/api/shutdown":
+                with STATE_LOCK:
+                    running = CURRENT_JOB is not None and CURRENT_JOB.status == "running"
+                if running:
+                    raise RuntimeError(
+                        "Hay una operación en curso. Cancélala o espera a que termine antes de cerrar el panel."
+                    )
                 self._json({"shuttingDown": True})
                 threading.Thread(target=self.server.shutdown, daemon=True).start()
                 return
@@ -998,7 +1167,11 @@ def main() -> None:
     if args.host not in {"127.0.0.1", "localhost", "::1"}:
         raise SystemExit("Por seguridad, la GUI solo puede enlazarse a loopback.")
     RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+    report_external_job()
     server = ThreadingHTTPServer((args.host, args.port), Handler)
+    # SIGTERM (kill, cierre de sesión) pasa por el mismo cierre ordenado que
+    # Ctrl+C: el job activo se cancela y se espera antes de salir.
+    signal.signal(signal.SIGTERM, _exit_on_signal)
     print(f"Fine-tuning GUI: http://127.0.0.1:{args.port}")
     print("Acceso restringido a la máquina local.")
     try:
@@ -1006,6 +1179,7 @@ def main() -> None:
     except KeyboardInterrupt:
         pass
     finally:
+        stop_running_job()
         server.server_close()
 
 

@@ -10,6 +10,31 @@ dataset=$1
 adapter_name=$2
 shift 2
 
+# --- lock GPU/vLLM (bloque idéntico en scripts/train-adapter.sh y scripts/train-adapter-axolotl.sh) ---
+# Exclusión mutua con las GUIs (trainer/runtime_lock.py) y con otros
+# entrenamientos por CLI. Una GUI que ya tomó el lock lo pasa heredado en
+# LLM_BRIDGE_GPU_LOCK_FD; solo se acepta si ese descriptor es el mismo archivo.
+gpu_lock_file="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)/.runtime/gpu.lock"
+acquire_gpu_lock() {
+  if ! command -v flock >/dev/null 2>&1; then
+    echo "Error: falta 'flock' (util-linux); no se puede garantizar el uso exclusivo de la GPU." >&2
+    exit 1
+  fi
+  local inherited=${LLM_BRIDGE_GPU_LOCK_FD:-}
+  if [[ "$inherited" =~ ^[0-9]+$ && -e "/dev/fd/$inherited" && "/dev/fd/$inherited" -ef "$gpu_lock_file" ]] \
+    && flock -n "$inherited"; then
+    return 0
+  fi
+  mkdir -p -- "$(dirname -- "$gpu_lock_file")"
+  exec {gpu_lock_fd}>>"$gpu_lock_file"
+  if ! flock -n "$gpu_lock_fd"; then
+    echo "Error: otra operación de GPU/vLLM está en curso (GUI o CLI; lock $gpu_lock_file). Espera a que termine antes de entrenar." >&2
+    exit 1
+  fi
+}
+acquire_gpu_lock
+# --- fin lock GPU/vLLM ---
+
 if [[ ! -f "$dataset" && "$dataset" == *"terraria-training.jsonl" ]]; then
   python_builder=$(command -v python3 || command -v python || true)
   [[ -n "$python_builder" ]] || { echo "No se encontró Python para reconstruir Terraria." >&2; exit 1; }

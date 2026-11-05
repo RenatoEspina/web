@@ -85,6 +85,8 @@ El comando principal es:
 
 Internamente llama a `scripts/train-adapter.sh`. Si vLLM está activo, el script lo detiene antes del entrenamiento y lo vuelve a iniciar al finalizar para liberar VRAM durante QLoRA.
 
+El script toma el lock `.runtime/gpu.lock` con `flock` antes de cualquier otro paso. Es el mismo lock que usan las GUIs de fine-tuning: si otra GUI o un entrenamiento por CLI lo tiene, el comando termina de inmediato con un error en lugar de competir por la GPU.
+
 El entrenador escribe primero en un directorio temporal oculto bajo `adapters/`. Solo cuando el entrenamiento, los pesos, tokenizer y `manifest.json` se han guardado correctamente publica el directorio final mediante un rename atómico. Un entrenamiento fallido no deja un adaptador parcial ocupando el nombre solicitado.
 
 El resultado final tiene una estructura similar a:
