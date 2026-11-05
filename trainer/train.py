@@ -476,7 +476,10 @@ def main() -> None:
             "metrics": manifest["metrics"],
             "qualitySelection": quality_selection,
         }))
-    except Exception:
+    except BaseException:
+        # BaseException incluye KeyboardInterrupt: cancelar desde la GUI (SIGINT)
+        # también borra el staging de esta corrida. Tras el rename ya no existe,
+        # así que nunca toca el adaptador publicado.
         shutil.rmtree(staging, ignore_errors=True)
         raise
 

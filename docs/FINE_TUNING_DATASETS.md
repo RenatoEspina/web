@@ -200,6 +200,14 @@ La mezcla conserva los 160 ejemplos de Terraria y añade 40 generales encima. La
 validación se mezcla en la misma proporción, así que `eval_loss` ya no puede
 premiar al checkpoint que más capacidad general perdió.
 
+`mix_replay.py` arma y valida los dos splits en memoria antes de escribir nada:
+
+| Situación | Resultado en `trainer/datasets/` |
+| --- | --- |
+| La validación mezclada repite prompts del training, o un JSONL es inválido | Aborta y no modifica ningún archivo |
+| Ambos splits son válidos | Reemplaza `<nombre>-training.jsonl` y `<nombre>-validation.jsonl` de forma atómica |
+| El dominio o el replay no tienen validación | Escribe el training y borra un `<nombre>-validation.jsonl` anterior, para que `scripts/train-adapter.sh` no lo empareje con la mezcla nueva |
+
 Con 200 ejemplos siguen siendo pocos pasos: sube `--epochs` a 3 o 4, o baja
 `--gradient-accumulation` a 4 para duplicar los pasos por época. Cambia **una
 variable a la vez**, como pide el plan experimental que ya está escrito en
