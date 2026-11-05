@@ -59,6 +59,13 @@ DEFAULT_VLLM_IMAGE = "vllm/vllm-openai:v0.29.0"
 CANCEL_SIGINT_GRACE_SECONDS = 10.0
 CANCEL_SIGTERM_GRACE_SECONDS = 5.0
 CANCEL_OUTPUT_DRAIN_SECONDS = 2.0
+# Una reconciliación de la allowlist interrumpida (por ejemplo, al cancelar un
+# entrenamiento mientras vLLM se reiniciaba) deja esta marca en .runtime/. El
+# panel la completa automáticamente cuando vLLM vuelve a responder.
+RECONCILE_MARKER_FILENAME = "adapters-reconcile-pending"
+RECONCILE_POLL_SECONDS = 5.0
+RECONCILE_RETRY_SECONDS = 60.0
+_LAST_AUTO_RECONCILE_FAILURE: float | None = None
 
 
 @dataclass
@@ -83,6 +90,14 @@ CSRF_TOKEN = secrets.token_urlsafe(32)
 
 class JobCancelled(RuntimeError):
     pass
+
+
+class AdapterBaseMismatch(RuntimeError):
+    """vLLM sirve una base conocida distinta de la usada para entrenar el adaptador."""
+
+
+class InvalidAllowlistEntry(ValueError):
+    """La entrada de LLM_ADAPTER_MODELS no corresponde a un adaptador cargable."""
 
 
 def gpu_lock_path() -> Path:
@@ -554,6 +569,19 @@ def _wait_for_output(job: Job, reader: threading.Thread) -> None:
             return
 
 
+def _wait_for_process_group(job: Job, pgid: int) -> None:
+    """El job no termina mientras quede vivo algún proceso de su grupo.
+
+    Tras una cancelación la escalada acaba en SIGKILL; sin cancelación se espera a
+    los procesos que el comando dejó en su grupo y el job sigue siendo cancelable.
+    """
+    if not runtime_lock.process_group_alive(pgid):
+        return
+    append_log(job, f"Esperando a que terminen los procesos restantes del grupo {pgid}…")
+    while runtime_lock.process_group_alive(pgid):
+        time.sleep(0.1)
+
+
 def run_command(
     job: Job,
     command: list[str],
@@ -607,8 +635,10 @@ def run_command(
     try:
         returncode = process.wait()
         _wait_for_output(job, reader)
+        _wait_for_process_group(job, process.pid)
     finally:
-        if job.gpu_lock is not None:
+        # Con procesos vivos el registro se conserva: el próximo arranque los detecta.
+        if job.gpu_lock is not None and not runtime_lock.process_group_alive(process.pid):
             runtime_lock.remove_job_record(job_record_path(), process.pid)
     with STATE_LOCK:
         job.process = None
@@ -661,8 +691,8 @@ def post_vllm(path: str, payload: dict[str, str]) -> str:
         raise RuntimeError("vLLM no está disponible en 127.0.0.1:8000.") from error
 
 
-def validate_adapter_base(name: str) -> str:
-    """Check training metadata against the served root, never a LoRA's parent."""
+def adapter_training_base(name: str) -> str:
+    """Base declarada por los metadatos del adaptador; ValueError si son inválidos."""
     config, manifest = read_config(ADAPTER_DIR / name)
     if not isinstance(config, dict) or not isinstance(manifest, dict):
         raise ValueError("Los metadatos del adaptador deben ser objetos JSON.")
@@ -672,6 +702,12 @@ def validate_adapter_base(name: str) -> str:
     base = base.strip()
     if "baseModel" in manifest and manifest["baseModel"] != base:
         raise ValueError("baseModel del manifest no coincide con adapter_config.json.")
+    return base
+
+
+def validate_adapter_base(name: str) -> str:
+    """Check training metadata against the served root, never a LoRA's parent."""
+    base = adapter_training_base(name)
 
     with urlopen("http://127.0.0.1:8000/v1/models", timeout=5) as response:
         payload = json.load(response)
@@ -684,7 +720,9 @@ def validate_adapter_base(name: str) -> str:
     roots = {item["root"].strip() for item in bases}
     if roots != {base}:
         served = ", ".join(sorted(roots)) or "base desconocida"
-        raise RuntimeError(f"El adaptador '{name}' fue entrenado sobre '{base}', pero vLLM sirve '{served}'. No se cargará un LoRA incompatible.")
+        message = f"El adaptador '{name}' fue entrenado sobre '{base}', pero vLLM sirve '{served}'. No se cargará un LoRA incompatible."
+        # Sin una base identificable no hay prueba de incompatibilidad: no es un mismatch.
+        raise AdapterBaseMismatch(message) if roots else RuntimeError(message)
     return bases[0]["id"]
 
 
@@ -897,35 +935,77 @@ def load_adapter_runtime(job: Job, name: str) -> str:
     return runtime_path
 
 
+def reconcile_marker_path() -> Path:
+    return RUNTIME_DIR / RECONCILE_MARKER_FILENAME
+
+
+def _clear_reconcile_marker() -> None:
+    try:
+        reconcile_marker_path().unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def _check_allowlist_entry(name: str) -> str:
+    """Errores propios de la entrada; solo estos permiten retirarla de la allowlist."""
+    try:
+        name = validate_adapter_name(name)
+    except ValueError as error:
+        raise InvalidAllowlistEntry(str(error)) from error
+    directory = ADAPTER_DIR / name
+    if directory.is_symlink() or not directory.is_dir():
+        raise InvalidAllowlistEntry("el adaptador ya no existe en adapters/")
+    if not (directory / "adapter_config.json").is_file() or not (directory / "adapter_model.safetensors").is_file():
+        raise InvalidAllowlistEntry("El adaptador no contiene los archivos PEFT esperados.")
+    try:
+        adapter_training_base(name)
+    except ValueError as error:
+        raise InvalidAllowlistEntry(str(error)) from error
+    # Aquí un ValueError vendría de la respuesta de vLLM: es infraestructura y se propaga.
+    try:
+        validate_adapter_base(name)
+    except AdapterBaseMismatch as error:
+        raise InvalidAllowlistEntry(str(error)) from error
+    return name
+
+
 def reconcile_adapter_allowlist(job: Job) -> dict[str, list[str]]:
     """Alinea LLM_ADAPTER_MODELS con vLLM después de (re)iniciarlo (FT-03).
 
     Reiniciar vLLM descarta los LoRA cargados dinámicamente. Cada adaptador de la
     allowlist que ya no está servido se recarga con la misma validación de base
-    que "Cargar en vLLM"; si no es posible (otra base, archivos ausentes, export
-    fallido), se retira de la allowlist para que el gateway no lo ofrezca.
+    que "Cargar en vLLM". Solo se retira una entrada inválida en sí misma (el
+    adaptador ya no existe, sus metadatos son inválidos o vLLM sirve otra base).
+    Un fallo de infraestructura (intérprete o exportación, error de vLLM) nunca
+    retira un adaptador válido: se conserva y la reconciliación termina en error.
     """
     summary: dict[str, list[str]] = {"kept": [], "reloaded": [], "removed": []}
     allowlisted = allowlisted_adapters()
     if not allowlisted:
         append_log(job, "LLM_ADAPTER_MODELS está vacía; no hay adaptadores que reconciliar.")
+        _clear_reconcile_marker()
         return summary
     running, served = fetch_vllm_models()
     if not running:
         raise RuntimeError("vLLM no está disponible; no se puede reconciliar LLM_ADAPTER_MODELS.")
     append_log(job, f"Reconciliando LLM_ADAPTER_MODELS con vLLM: {', '.join(allowlisted)}")
+    failed: list[str] = []
     for name in allowlisted:
         if name in served:
             summary["kept"].append(name)
             append_log(job, f"{name}: sigue cargado en vLLM.")
             continue
         try:
-            load_adapter_runtime(job, validate_adapter_name(name))
+            load_adapter_runtime(job, _check_allowlist_entry(name))
         except JobCancelled:
             raise
-        except Exception as error:
+        except InvalidAllowlistEntry as error:
             summary["removed"].append(name)
-            append_log(job, f"{name}: se retira de LLM_ADAPTER_MODELS porque no se pudo recargar ({error}).")
+            append_log(job, f"{name}: se retira de LLM_ADAPTER_MODELS ({error}).")
+            continue
+        except Exception as error:
+            failed.append(f"{name} ({error})")
+            append_log(job, f"{name}: se conserva en LLM_ADAPTER_MODELS; no se pudo recargar ({error}).")
             continue
         summary["reloaded"].append(name)
         append_log(job, f"{name}: recargado en vLLM tras el reinicio.")
@@ -933,7 +1013,57 @@ def reconcile_adapter_allowlist(job: Job) -> dict[str, list[str]]:
         set_adapter_allowed_in_env(name, False)
     if summary["removed"]:
         append_log(job, "Si la web ya estaba activa, reiníciala para que relea .env.local.")
+    if failed:
+        raise RuntimeError(
+            "No se pudo recargar en vLLM: " + "; ".join(failed)
+            + "; se conservan en LLM_ADAPTER_MODELS hasta poder verificarlos. Vuelve a intentarlo cuando se resuelva."
+        )
+    _clear_reconcile_marker()
     return summary
+
+
+def _run_reconcile_job(job: Job) -> None:
+    global _LAST_AUTO_RECONCILE_FAILURE
+    try:
+        job.result = reconcile_adapter_allowlist(job)
+    except JobCancelled:
+        raise
+    except Exception:
+        _LAST_AUTO_RECONCILE_FAILURE = time.monotonic()
+        raise
+    _LAST_AUTO_RECONCILE_FAILURE = None
+
+
+def maybe_start_pending_reconcile() -> Job | None:
+    """Completa una reconciliación pendiente en cuanto vLLM vuelve a responder.
+
+    La marca la dejan scripts/train-adapter*.sh al detener vLLM y la borra la
+    reconciliación completa; persiste si una cancelación la interrumpió.
+    """
+    if not reconcile_marker_path().exists():
+        return None
+    if (_LAST_AUTO_RECONCILE_FAILURE is not None
+            and time.monotonic() - _LAST_AUTO_RECONCILE_FAILURE < RECONCILE_RETRY_SECONDS):
+        return None
+    with STATE_LOCK:
+        if CURRENT_JOB is not None and CURRENT_JOB.status == "running":
+            return None
+    running, _ = fetch_vllm_models()
+    if not running:
+        return None
+    try:
+        return start_job("reconcile-adapters", {})
+    except RuntimeError:
+        # Otra operación (otra GUI o CLI) tiene la GPU: se reintenta más tarde.
+        return None
+
+
+def watch_pending_reconcile(stop: threading.Event) -> None:
+    while not stop.wait(RECONCILE_POLL_SECONDS):
+        try:
+            maybe_start_pending_reconcile()
+        except Exception as error:
+            print(f"Aviso: no se pudo iniciar la reconciliación pendiente: {error}", flush=True)
 
 
 def setup_environment(job: Job, *, automatic: bool = False) -> None:
@@ -994,6 +1124,10 @@ def run_action(job: Job, payload: dict[str, Any]) -> None:
         env = environment_with_hf_token(hf_token)
         env["VLLM_MODEL"] = model
         env["LLM_BRIDGE_NONINTERACTIVE"] = "1"
+        python = trainer_python()
+        if python.is_file():
+            # La reconciliación posterior exporta con el intérprete de este backend.
+            env["FINE_TUNE_PYTHON"] = str(python)
         run_command(
             job,
             [fish, str(ROOT / "comandos.fish"), "vllm", model],
@@ -1024,6 +1158,9 @@ def run_action(job: Job, payload: dict[str, Any]) -> None:
                     label="Comparando probabilidades: base repetida vs LoRA")
         append_log(job, "Efecto del LoRA detectado. Esto no mide la calidad de las respuestas.")
         job.result = {"adapter": name, "inferenceVerified": True}
+        return
+    if action == "reconcile-adapters":
+        _run_reconcile_job(job)
         return
     if action == "delete-adapter":
         name = validate_adapter_name(payload.get("name"))
@@ -1105,7 +1242,7 @@ def job_worker(job: Job, payload: dict[str, Any]) -> None:
 
 
 def start_job(action: str, payload: dict[str, Any]) -> Job:
-    allowed = {"setup", "check", "train", "start-vllm", "stop-vllm", "load-adapter", "unload-adapter", "verify-adapter", "delete-adapter"}
+    allowed = {"setup", "check", "train", "start-vllm", "stop-vllm", "load-adapter", "unload-adapter", "verify-adapter", "delete-adapter", "reconcile-adapters"}
     if action not in allowed:
         raise ValueError("Acción no permitida.")
     global CURRENT_JOB
@@ -1182,13 +1319,30 @@ def stop_running_job() -> None:
     print("Cancelando la operación en curso antes de cerrar el panel…", flush=True)
     cancel_job()
     limit = CANCEL_SIGINT_GRACE_SECONDS + CANCEL_SIGTERM_GRACE_SECONDS + CANCEL_OUTPUT_DRAIN_SECONDS + 5.0
-    deadline = time.monotonic() + limit
+    if _wait_job_finished(job, limit):
+        return
+    # La escalada corre en un hilo daemon que muere con el panel: antes de salir
+    # se envía SIGKILL directamente al grupo para no dejar procesos huérfanos.
+    with STATE_LOCK:
+        process = job.process
+    if process is not None:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
+        if _wait_job_finished(job, 5.0):
+            return
+    print("Aviso: la operación no terminó a tiempo; revisa los procesos manualmente.", flush=True)
+
+
+def _wait_job_finished(job: Job, seconds: float) -> bool:
+    deadline = time.monotonic() + seconds
     while time.monotonic() < deadline:
         with STATE_LOCK:
             if job.status != "running":
-                return
+                return True
         time.sleep(0.1)
-    print("Aviso: la operación no terminó a tiempo; revisa los procesos manualmente.", flush=True)
+    return False
 
 
 def report_external_job() -> None:
@@ -1397,6 +1551,8 @@ def main() -> None:
     # SIGTERM (kill, cierre de sesión) pasa por el mismo cierre ordenado que
     # Ctrl+C: el job activo se cancela y se espera antes de salir.
     signal.signal(signal.SIGTERM, _exit_on_signal)
+    stop_watcher = threading.Event()
+    threading.Thread(target=watch_pending_reconcile, args=(stop_watcher,), daemon=True).start()
     display_host = "[::1]" if ":" in args.host else "127.0.0.1"
     print(f"Fine-tuning GUI: http://{display_host}:{args.port}")
     print("Acceso restringido a la máquina local.")
@@ -1405,6 +1561,7 @@ def main() -> None:
     except KeyboardInterrupt:
         pass
     finally:
+        stop_watcher.set()
         stop_running_job()
         server.server_close()
 

@@ -131,7 +131,10 @@ lanzados desde la GUI heredan el lock que ya tomó el panel.
 El trabajo actual se puede cancelar desde la terminal integrada. La cancelación
 envía `SIGINT` al grupo de procesos del job; si sigue activo tras unos 10 s envía
 `SIGTERM`, y tras otros 5 s `SIGKILL`. El job queda como `cancelled` aunque un
-subproceso desacoplado mantenga abierta la salida.
+subproceso desacoplado mantenga abierta la salida, pero nunca mientras quede vivo
+algún proceso de su grupo (por ejemplo, un worker que ignora `SIGINT`): hasta
+entonces sigue en curso, conserva `.runtime/gpu-job.json` y **Cerrar panel** se
+rechaza.
 
 ### 4. Iniciar o detener vLLM
 
@@ -163,9 +166,19 @@ Reiniciar vLLM descarta los LoRA cargados dinámicamente. Por eso, después de c
 arranque con **Iniciar vLLM** o `./comandos.fish vllm`, y después del reinicio que
 hace el entrenamiento, se ejecuta `trainer/runtime_adapters.py`: cada adaptador de
 `LLM_ADAPTER_MODELS` que vLLM ya no sirve se recarga con la misma validación de base
-que **Cargar en vLLM**, o se retira de la allowlist si no es posible (por ejemplo,
-porque se inició otra base). **Detener vLLM** conserva la allowlist; el siguiente
-arranque la reconcilia.
+que **Cargar en vLLM**. Solo se retira de la allowlist una entrada inválida en sí
+misma: el adaptador ya no existe, sus metadatos son inválidos o vLLM sirve otra base.
+Un fallo de infraestructura (intérprete o exportación, error de vLLM) nunca retira un
+adaptador válido: se conserva y la operación termina con error. Desde la GUI Axolotl
+la exportación usa el intérprete de `trainer/.venv-axolotl`. **Detener vLLM**
+conserva la allowlist; el siguiente arranque la reconcilia.
+
+Si se cancela un entrenamiento mientras vLLM se reinicia, la escalada de la
+cancelación interrumpe la reconciliación. Por eso el entrenamiento deja la marca
+`.runtime/adapters-reconcile-pending` al detener vLLM, y solo una reconciliación
+completa la borra. Mientras el panel está abierto, cuando vLLM vuelve a responder y
+no hay otra operación en curso, inicia solo una operación **Reconciliando allowlist
+LoRA**. Si falla, la reintenta al cabo de un minuto.
 
 Si un adaptador sigue en la allowlist sin estar cargado, la GUI muestra
 **Retirar de la allowlist**: lo quita de `LLM_ADAPTER_MODELS` sin llamar a vLLM.
