@@ -324,7 +324,7 @@ GitHub Actions ejecuta la misma verificación para los pull requests. Las compro
 
 ## Estado y limitaciones
 
-Las principales limitaciones deliberadas se documentan en [`docs/KNOWN_LIMITATIONS.md`](docs/KNOWN_LIMITATIONS.md), incluyendo:
+[`docs/KNOWN_LIMITATIONS.md`](docs/KNOWN_LIMITATIONS.md) es el registro central de limitaciones aceptadas, errores conocidos pendientes y correcciones recientes, tanto del gateway como del fine-tuning. Entre las limitaciones deliberadas están:
 
 - cambio del modelo de embeddings con un índice ya creado;
 - engines alternativos a vLLM;
