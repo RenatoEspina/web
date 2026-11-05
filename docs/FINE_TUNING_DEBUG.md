@@ -189,7 +189,8 @@ jq '.parameters.targetModules, .parameters.targetModuleSuffixes' adapters/NOMBRE
 ```
 
 Un adapter entrenado antes de este cambio dirá `all-linear`; reentrénalo antes
-de seguir diagnosticando otra cosa.
+de seguir diagnosticando otra cosa. El backend Axolotl aplica el mismo preset a
+Qwen3.5 y registra los mismos dos campos (ver `docs/FINE_TUNING_AXOLOTL.md`).
 
 ## 9. Criterio para decidir la causa
 

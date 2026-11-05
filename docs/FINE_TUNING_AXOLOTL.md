@@ -42,7 +42,14 @@ La GUI Axolotl conserva los parámetros visibles del panel: modelo base, rank, a
 El wrapper genera una configuración Axolotl por ejecución con:
 
 - `adapter: qlora` y cuantización de 4 bits;
-- `lora_target_linear: true`, equivalente práctico al objetivo `all-linear` del backend básico;
+- módulos LoRA según la arquitectura que informa `AutoConfig` (`model_type`):
+
+  | `model_type` | Configuración Axolotl | `targetModules` en el manifest |
+  | --- | --- | --- |
+  | `qwen3_5`, `qwen3_5_text` | `lora_target_modules` con el preset `attention-mlp` del backend básico | `attention-mlp` |
+  | cualquier otra | `lora_target_linear: true` | `all-linear` |
+
+  Qwen3.5 no usa `all-linear` porque adaptar las puertas de estado `in_proj_a`/`in_proj_b` produce bucles de repetición (ver `docs/FINE_TUNING_DEBUG.md`);
 - dataset OpenAI `messages` con `roles_to_train: [assistant]`;
 - `train_on_eos: turn` para no entrenar sobre los turnos `system`/`user`;
 - `sample_packing: false`; para Qwen3.5 esto evita depender del packing optimizado en este perfil de una sola GPU;
@@ -50,12 +57,19 @@ El wrapper genera una configuración Axolotl por ejecución con:
 
 Si existe un dataset de validación separado para Terraria, Unidades o un archivo hermano `*-validation.jsonl`, se añade como `test_datasets`.
 
+Antes de lanzar Axolotl, el wrapper prepara los datos igual que `train.py`:
+
+- **Normalización:** Axolotl entrena una copia temporal del JSONL normalizada por `load_jsonl` (`content` sin espacios sobrantes y sin campos extra), no el archivo original. El manifest conserva la ruta y el hash del archivo original.
+- **Auditoría de truncamiento:** mide cada ejemplo con el tokenizer del modelo base y la plantilla de máscara de TRL, como el backend básico. Si alguna respuesta `assistant` supera la longitud máxima, el entrenamiento se aborta antes de ocupar la GPU. `--allow-truncation` permite continuar de forma explícita.
+
+La auditoría usa la plantilla de TRL, mientras Axolotl tokeniza con la plantilla de su configuración (`qwen3_5` o la del tokenizer), así que el conteo puede diferir en unos pocos tokens de formato.
+
 ## Salida y serving
 
 Los adapters terminados siguen publicándose en `adapters/<nombre>` y deben contener los archivos PEFT esperados por el proyecto. Además se escriben:
 
-- `manifest.json` con `backend: axolotl` y metadatos de reproducibilidad;
-- `axolotl-config.yaml` con la configuración efectiva del entrenamiento.
+- `manifest.json` con `backend: axolotl`, los módulos LoRA usados (`parameters.targetModules` y `parameters.targetModuleSuffixes`) y metadatos de reproducibilidad;
+- `axolotl-config.yaml` con la configuración efectiva del entrenamiento. Sus rutas `datasets` y `test_datasets` apuntan a las copias normalizadas temporales, que se borran al terminar; el dataset de origen está en `manifest.json`.
 
 La carga, descarga, verificación y exportación para vLLM siguen usando la infraestructura existente. El entrenamiento mantiene el comportamiento de liberar vLLM antes de ocupar la GPU y restaurarlo al finalizar.
 

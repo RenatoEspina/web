@@ -130,7 +130,9 @@ perfil `laptop` de Dolly da ~750 pasos en las mismas dos épocas.
 ### 2. Un único system prompt y un único dominio
 
 Los 160 ejemplos comparten el mismo `system` y hablan todos de Terraria. Con
-`target_modules="all-linear"` y rank 16, lo que el adapter aprende no es solo
+`target_modules="all-linear"` (el valor de entonces; hoy el valor por defecto es
+`attention-mlp`, ver `docs/FINE_TUNING_DEBUG.md`) y rank 16, lo que el adapter
+aprende no es solo
 "datos de Terraria": aprende "responde siempre en este registro, sobre este
 tema". Eso es exactamente lo que se percibe como modelo roto al usarlo en el
 chat normal.
