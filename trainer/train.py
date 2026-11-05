@@ -24,6 +24,7 @@ from trl.chat_template_utils import get_training_chat_template
 
 from dataset_validation import load_jsonl
 from training_quality import (
+    exit_on_sigterm,
     TARGET_MODULE_PRESETS,
     audit_token_lengths,
     count_prompt_overlaps,
@@ -485,5 +486,6 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    exit_on_sigterm()
     os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
     main()
