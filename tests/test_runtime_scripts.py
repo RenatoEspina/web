@@ -157,5 +157,72 @@ class TrainingScriptLockTests(unittest.TestCase):
         self.assertFalse(project.docker_log.exists())
 
 
+@unittest.skipUnless(shutil.which("fish"), "requiere fish")
+class FishEnvFileTests(unittest.TestCase):
+    """FT-04: ./comandos.fish vllm reescribe LLM_MODEL sin ampliar permisos."""
+
+    def start_vllm(self, project):
+        project.fake("docker", f'printf "%s\\n" "$*" >> {project.docker_log}\nexit 0\n')
+        project.fake("curl", "exit 0\n")
+        project.fake("python3", "exit 0\n")
+        project.fake("python3.13", "exit 0\n")
+        project.fake("python", "exit 0\n")
+        return subprocess.run(
+            ["fish", str(project.root / "comandos.fish"), "vllm", "Org/Modelo-Nuevo"],
+            cwd=project.root, env=project.env(LLM_BRIDGE_NONINTERACTIVE="1", HF_TOKEN=""),
+            capture_output=True, text=True, timeout=60, umask=0o022,
+        )
+
+    def test_private_env_file_stays_private(self):
+        project = ScratchProject(self)
+        env_file = project.root / ".env.local"
+        env_file.write_text("APP_TOKEN=secreto\nLLM_MODEL=Org/Modelo-Viejo\n", encoding="utf-8")
+        env_file.chmod(0o600)
+
+        result = self.start_vllm(project)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("LLM_MODEL sincronizado en .env.local: Org/Modelo-Nuevo", result.stdout)
+        self.assertEqual(env_file.read_text(encoding="utf-8"), "APP_TOKEN=secreto\nLLM_MODEL=Org/Modelo-Nuevo\n")
+        self.assertEqual(env_file.stat().st_mode & 0o777, 0o600)
+        self.assertFalse((project.root / ".env.local.tmp").exists())
+
+    def test_existing_mode_is_preserved(self):
+        project = ScratchProject(self)
+        env_file = project.root / ".env.local"
+        env_file.write_text("LLM_PROVIDER=vllm\n", encoding="utf-8")
+        env_file.chmod(0o640)
+
+        result = self.start_vllm(project)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(env_file.read_text(encoding="utf-8"), "LLM_PROVIDER=vllm\nLLM_MODEL=Org/Modelo-Nuevo\n")
+        self.assertEqual(env_file.stat().st_mode & 0o777, 0o640)
+
+    def test_new_env_file_is_created_private(self):
+        project = ScratchProject(self)
+
+        result = self.start_vllm(project)
+
+        env_file = project.root / ".env.local"
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(env_file.read_text(encoding="utf-8"), "LLM_MODEL=Org/Modelo-Nuevo\n")
+        self.assertEqual(env_file.stat().st_mode & 0o777, 0o600)
+
+    def test_symlinked_env_file_is_updated_in_place(self):
+        project = ScratchProject(self)
+        target = project.root / "secretos.env"
+        target.write_text("LLM_MODEL=Org/Modelo-Viejo\n", encoding="utf-8")
+        target.chmod(0o600)
+        (project.root / ".env.local").symlink_to(target.name)
+
+        result = self.start_vllm(project)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((project.root / ".env.local").is_symlink())
+        self.assertEqual(target.read_text(encoding="utf-8"), "LLM_MODEL=Org/Modelo-Nuevo\n")
+        self.assertEqual(target.stat().st_mode & 0o777, 0o600)
+
+
 if __name__ == "__main__":
     unittest.main()

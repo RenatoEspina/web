@@ -14,6 +14,7 @@ import shlex
 import shutil
 import signal
 import subprocess
+import tempfile
 import threading
 import time
 import uuid
@@ -160,11 +161,90 @@ def number_arg(payload: dict[str, Any], key: str, default: float, minimum: float
 def int_arg(payload: dict[str, Any], key: str, default: int, minimum: int, maximum: int) -> int:
     try:
         value = int(payload.get(key, default))
-    except (TypeError, ValueError) as error:
+    except (TypeError, ValueError, OverflowError) as error:
         raise ValueError(f"{key} debe ser entero.") from error
     if not minimum <= value <= maximum:
         raise ValueError(f"{key} debe estar entre {minimum} y {maximum}.")
     return value
+
+
+@dataclass(frozen=True)
+class TrainingRequest:
+    """Payload de entrenamiento ya validado; compartido por ambas GUIs."""
+
+    dataset: Path
+    examples: int
+    name: str
+    model: str
+    hf_token: str
+    rank: int
+    alpha: int
+    epochs: float
+    dropout: float
+    learning_rate: float
+    batch_size: int
+    gradient_accumulation: int
+    max_length: int
+    seed: int
+
+    def script_arguments(self) -> list[str]:
+        """Argumentos comunes de scripts/train-adapter.sh y train-adapter-axolotl.sh."""
+        return [
+            str(self.dataset),
+            self.name,
+            "--model",
+            self.model,
+            "--rank",
+            str(self.rank),
+            "--alpha",
+            str(self.alpha),
+            "--dropout",
+            str(self.dropout),
+            "--epochs",
+            str(self.epochs),
+            "--learning-rate",
+            str(self.learning_rate),
+            "--batch-size",
+            str(self.batch_size),
+            "--gradient-accumulation",
+            str(self.gradient_accumulation),
+            "--max-length",
+            str(self.max_length),
+            "--seed",
+            str(self.seed),
+        ]
+
+
+def validate_training_payload(payload: dict[str, Any]) -> TrainingRequest:
+    """Valida el payload completo antes de cualquier efecto (FT-11).
+
+    Ninguna operación con efectos, como ensure_adapter_dir_writable (que puede
+    lanzar un contenedor root), debe ejecutarse antes de esta función.
+    """
+    dataset = dataset_path(payload.get("dataset"))
+    _, summary = load_jsonl(dataset)
+    name = validate_adapter_name(payload.get("name"))
+    model = validate_model(payload.get("model"))
+    hf_token = validate_hf_token(payload.pop("hfToken", ""))
+    rank = int_arg(payload, "rank", 16, 8, 32)
+    if rank not in {8, 16, 32}:
+        raise ValueError("rank debe ser 8, 16 o 32.")
+    return TrainingRequest(
+        dataset=dataset,
+        examples=int(summary["examples"]),
+        name=name,
+        model=model,
+        hf_token=hf_token,
+        rank=rank,
+        alpha=int_arg(payload, "alpha", 32, 1, 256),
+        epochs=number_arg(payload, "epochs", 2.0, 0.1, 20.0),
+        dropout=number_arg(payload, "dropout", 0.05, 0.0, 0.5),
+        learning_rate=number_arg(payload, "learningRate", 1e-4, 1e-7, 0.1),
+        batch_size=int_arg(payload, "batchSize", 1, 1, 32),
+        gradient_accumulation=int_arg(payload, "gradientAccumulation", 8, 1, 256),
+        max_length=int_arg(payload, "maxLength", 1024, 128, 16384),
+        seed=int_arg(payload, "seed", 42, 0, 2_147_483_647),
+    )
 
 
 def dataset_path(dataset_id: Any) -> Path:
@@ -633,10 +713,34 @@ def rollback_adapter_runtime(name: str, allowed: bool, runtime_path: str | None 
         )
 
 
+def _env_file_target(env_file: Path) -> Path:
+    """Un .env.local enlazado se conserva: se reescribe el archivo apuntado."""
+    if env_file.is_symlink() and env_file.exists():
+        return env_file.resolve()
+    return env_file
+
+
+def _replace_env_file(target: Path, content: str) -> None:
+    """Reemplazo atómico sin ampliar permisos (FT-04).
+
+    mkstemp crea el temporal con O_EXCL y modo 0600; si el archivo ya existía
+    se copia su modo, de modo que uno privado sigue privado y uno nuevo nace 0600.
+    """
+    descriptor, temporary = tempfile.mkstemp(dir=target.parent, prefix=f".{target.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            handle.write(content)
+        if target.exists():
+            shutil.copymode(target, temporary)
+        os.replace(temporary, target)
+    except BaseException:
+        Path(temporary).unlink(missing_ok=True)
+        raise
+
+
 def set_adapter_allowed_in_env(name: str, allowed: bool, *, rollback_runtime: bool = False,
                                runtime_path: str | None = None) -> bool:
     env_file = ROOT / ".env.local"
-    temporary = env_file.with_suffix(env_file.suffix + ".tmp")
     try:
         text = env_file.read_text(encoding="utf-8") if env_file.exists() else ""
         lines = text.splitlines()
@@ -669,14 +773,9 @@ def set_adapter_allowed_in_env(name: str, allowed: bool, *, rollback_runtime: bo
         if not changed:
             return False
 
-        temporary.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
-        os.replace(temporary, env_file)
+        _replace_env_file(_env_file_target(env_file), "\n".join(lines).rstrip() + "\n")
         return True
     except OSError as error:
-        try:
-            temporary.unlink(missing_ok=True)
-        except OSError:
-            pass
         if not rollback_runtime:
             raise RuntimeError(f"No fue posible actualizar {env_file.name}: {error}") from error
         try:
@@ -729,62 +828,22 @@ def run_action(job: Job, payload: dict[str, Any]) -> None:
         job.result = {"check": "ok"}
         return
     if action == "train":
-        dataset = dataset_path(payload.get("dataset"))
-        _, summary = load_jsonl(dataset)
+        request = validate_training_payload(payload)
         ensure_adapter_dir_writable(job)
-        name = validate_adapter_name(payload.get("name"))
-        model = validate_model(payload.get("model"))
-        hf_token = validate_hf_token(payload.pop("hfToken", ""))
-        rank = int_arg(payload, "rank", 16, 8, 32)
-        if rank not in {8, 16, 32}:
-            raise ValueError("rank debe ser 8, 16 o 32.")
-        alpha = int_arg(payload, "alpha", 32, 1, 256)
-        epochs = number_arg(payload, "epochs", 2.0, 0.1, 20.0)
-        dropout = number_arg(payload, "dropout", 0.05, 0.0, 0.5)
-        learning_rate = number_arg(payload, "learningRate", 1e-4, 1e-7, 0.1)
-        batch_size = int_arg(payload, "batchSize", 1, 1, 32)
-        gradient_accumulation = int_arg(payload, "gradientAccumulation", 8, 1, 256)
-        max_length = int_arg(payload, "maxLength", 1024, 128, 16384)
-        seed = int_arg(payload, "seed", 42, 0, 2_147_483_647)
         if not trainer_python().is_file():
             setup_environment(job, automatic=True)
         check_training_environment(job, "Verificando entorno")
-        command = [
-            "bash",
-            str(ROOT / "scripts" / "train-adapter.sh"),
-            str(dataset),
-            name,
-            "--model",
-            model,
-            "--rank",
-            str(rank),
-            "--alpha",
-            str(alpha),
-            "--dropout",
-            str(dropout),
-            "--epochs",
-            str(epochs),
-            "--learning-rate",
-            str(learning_rate),
-            "--batch-size",
-            str(batch_size),
-            "--gradient-accumulation",
-            str(gradient_accumulation),
-            "--max-length",
-            str(max_length),
-            "--seed",
-            str(seed),
-        ]
-        training_env = environment_with_hf_token(hf_token)
-        if hf_token:
+        command = ["bash", str(ROOT / "scripts" / "train-adapter.sh"), *request.script_arguments()]
+        training_env = environment_with_hf_token(request.hf_token)
+        if request.hf_token:
             append_log(job, "Hugging Face: autenticación efímera habilitada para las descargas del entrenamiento.")
-        run_command(job, command, env=training_env, label=f"Entrenando {name}")
-        job.result = {"adapter": name, "dataset": dataset.name, "examples": summary["examples"]}
+        run_command(job, command, env=training_env, label=f"Entrenando {request.name}")
+        job.result = {"adapter": request.name, "dataset": request.dataset.name, "examples": request.examples}
         return
     if action == "start-vllm":
         model = validate_model(payload.get("model"))
-        ensure_adapter_dir_writable(job)
         hf_token = validate_hf_token(payload.pop("hfToken", ""))
+        ensure_adapter_dir_writable(job)
         fish = shutil.which("fish")
         if not fish:
             raise RuntimeError("No se encontró fish; la GUI necesita ./comandos.fish para iniciar vLLM y embeddings.")

@@ -195,6 +195,8 @@ El panel es una herramienta administrativa local:
 - los adaptadores solo se cargan desde `adapters/` y sus nombres se validan;
 - los HF tokens opcionales solo viven en memoria y en el entorno del proceso hijo correspondiente;
 - no existe un endpoint para ejecutar comandos arbitrarios;
+- cada acción valida su payload completo (nombre, modelo, token e hiperparámetros) antes de cualquier efecto, incluida la reparación de permisos de `adapters/` con un contenedor root;
+- al reescribir `.env.local` (allowlist desde la GUI, `LLM_MODEL` desde `./comandos.fish vllm`) se conserva el modo del archivo; uno nuevo se crea con modo `0600` y un enlace simbólico se mantiene, actualizando el archivo al que apunta;
 - vLLM continúa publicado en el host únicamente como `127.0.0.1:8000`.
 
 La carga dinámica de LoRA requiere `VLLM_ALLOW_RUNTIME_LORA_UPDATING=True`. Esa API no debe exponerse a clientes no confiables; en este proyecto permanece detrás de loopback.
