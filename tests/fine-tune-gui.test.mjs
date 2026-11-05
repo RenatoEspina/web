@@ -179,3 +179,11 @@ test("la GUI permite retirar de la allowlist un adaptador que vLLM ya no sirve",
   assert.match(server, /"allowlistedAdapters": allowlisted_adapters\(\)/);
   assert.match(server, /solo se retira de LLM_ADAPTER_MODELS/);
 });
+
+test("el badge verde del entorno depende de una comprobación real, no solo del venv", () => {
+  assert.match(gui, /status\.environmentVerified\?"Entorno: verificado":status\.venvPresent\?"Entorno: sin verificar":"Entorno: pendiente"/);
+  assert.match(gui, /\$\("envBadge"\)\.className=`badge \$\{status\.environmentVerified\?"good":""\}`/);
+  assert.match(gui, /if\(index===0\)return Boolean\(currentStatus\?\.environmentVerified\)/);
+  assert.doesNotMatch(gui, /Entorno: listo/);
+  assert.match(server, /"environmentVerified": verified/);
+});

@@ -13,6 +13,7 @@ import secrets
 import shlex
 import shutil
 import signal
+import socket
 import subprocess
 import tempfile
 import threading
@@ -269,6 +270,11 @@ def dataset_summary(path: Path) -> dict[str, Any]:
         return dict(summary)
     except (OSError, ValueError, json.JSONDecodeError) as error:
         return {"valid": False, "error": str(error)}
+    except RecursionError:
+        return {"valid": False, "error": "No se pudo analizar el dataset: el JSON está demasiado anidado."}
+    except Exception as error:
+        # Cualquier otro fallo del análisis también es un dataset inválido (FT-10).
+        return {"valid": False, "error": f"No se pudo analizar el dataset ({type(error).__name__}): {error}"}
 
 
 def list_datasets() -> list[dict[str, Any]]:
@@ -422,13 +428,79 @@ def job_snapshot(job: Job | None) -> dict[str, Any] | None:
     }
 
 
+def environment_check_path(check_script: Path | None = None) -> Path:
+    """Resultado persistido de la última comprobación, uno por backend."""
+    return RUNTIME_DIR / f"environment-check.{(check_script or ENVIRONMENT_CHECK).stem}.json"
+
+
+def _venv_config_mtime(python: Path) -> int | None:
+    try:
+        return (python.parent.parent / "pyvenv.cfg").stat().st_mtime_ns
+    except OSError:
+        return None
+
+
+def clear_environment_check(check_script: Path | None = None) -> None:
+    try:
+        environment_check_path(check_script).unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def _record_environment_check(job: Job, check_script: Path | None, python: Path, ok: bool) -> None:
+    try:
+        runtime_lock.write_private_json(environment_check_path(check_script), {
+            "ok": ok,
+            "checkedAt": time.time(),
+            "python": str(python),
+            "venvConfigMtimeNs": _venv_config_mtime(python),
+        })
+    except OSError as error:
+        append_log(job, f"Aviso: no se pudo guardar el resultado de la comprobación: {error}")
+
+
+def verify_environment(job: Job, label: str, *, check: Any = None, check_script: Path | None = None) -> None:
+    """Ejecuta la comprobación real (CUDA, NF4) y persiste su resultado (FT-07).
+
+    Una cancelación no deja resultado: no prueba ni descarta el entorno.
+    """
+    python = trainer_python()
+    try:
+        (check or check_training_environment)(job, label)
+    except JobCancelled:
+        raise
+    except Exception:
+        _record_environment_check(job, check_script, python, ok=False)
+        raise
+    _record_environment_check(job, check_script, python, ok=True)
+
+
+def environment_status(venv_present: bool, *, check_script: Path | None = None) -> dict[str, Any]:
+    """Separa "existe el venv" de "la última comprobación real fue correcta"."""
+    record = runtime_lock.read_json_record(environment_check_path(check_script)) if venv_present else None
+    python = trainer_python()
+    verified = bool(
+        record
+        and record.get("ok") is True
+        and record.get("python") == str(python)
+        and record.get("venvConfigMtimeNs") == _venv_config_mtime(python)
+    )
+    return {
+        # Se conserva por compatibilidad: significa solo que el venv existe.
+        "environmentReady": venv_present,
+        "venvPresent": venv_present,
+        "environmentVerified": verified,
+        "environmentCheckedAt": record.get("checkedAt") if verified and record else None,
+    }
+
+
 def status_payload() -> dict[str, Any]:
     running, models = fetch_vllm_models()
     with STATE_LOCK:
         job = job_snapshot(CURRENT_JOB)
     return {
         "localOnly": True,
-        "environmentReady": trainer_python().is_file(),
+        **environment_status(trainer_python().is_file()),
         "dockerCli": shutil.which("docker") is not None,
         "bashCli": shutil.which("bash") is not None,
         "vllmRunning": running,
@@ -513,7 +585,7 @@ def run_command(
     )
     if job.gpu_lock is not None:
         try:
-            runtime_lock.write_job_record(job_record_path(), {
+            runtime_lock.write_private_json(job_record_path(), {
                 "pgid": process.pid,
                 "pid": process.pid,
                 "action": job.action,
@@ -887,14 +959,16 @@ def setup_environment(job: Job, *, automatic: bool = False) -> None:
 def run_action(job: Job, payload: dict[str, Any]) -> None:
     action = job.action
     if action == "setup":
+        # El entorno va a cambiar: la comprobación anterior deja de valer.
+        clear_environment_check()
         setup_environment(job)
-        check_training_environment(job, "Comprobando CUDA y bitsandbytes")
+        verify_environment(job, "Comprobando CUDA y bitsandbytes")
         job.result = {"environmentReady": True}
         return
     if action == "check":
         if not trainer_python().is_file():
             raise RuntimeError("Primero prepara el entorno de fine-tuning.")
-        check_training_environment(job, "Comprobando CUDA y bitsandbytes")
+        verify_environment(job, "Comprobando CUDA y bitsandbytes")
         job.result = {"check": "ok"}
         return
     if action == "train":
@@ -902,7 +976,7 @@ def run_action(job: Job, payload: dict[str, Any]) -> None:
         ensure_adapter_dir_writable(job)
         if not trainer_python().is_file():
             setup_environment(job, automatic=True)
-        check_training_environment(job, "Verificando entorno")
+        verify_environment(job, "Verificando entorno")
         command = ["bash", str(ROOT / "scripts" / "train-adapter.sh"), *request.script_arguments()]
         training_env = environment_with_hf_token(request.hf_token)
         if request.hf_token:
@@ -1168,7 +1242,7 @@ class Handler(BaseHTTPRequestHandler):
             raise ValueError("Solicitud vacía o demasiado grande.")
         try:
             payload = json.loads(self.rfile.read(length))
-        except json.JSONDecodeError as error:
+        except (json.JSONDecodeError, RecursionError) as error:
             raise ValueError("JSON inválido.") from error
         if not isinstance(payload, dict):
             raise ValueError("Se esperaba un objeto JSON.")
@@ -1243,13 +1317,20 @@ class Handler(BaseHTTPRequestHandler):
                 DATASET_DIR.mkdir(parents=True, exist_ok=True)
                 destination = DATASET_DIR / filename
                 temporary = DATASET_DIR / f".{filename}.{uuid.uuid4().hex}.tmp"
-                temporary.write_bytes(encoded)
-                summary = dataset_summary(temporary)
+                try:
+                    temporary.write_bytes(encoded)
+                    summary = dataset_summary(temporary)
+                    if summary.get("valid"):
+                        os.replace(temporary, destination)
+                finally:
+                    # El temporal nunca sobrevive a la subida, falle o no (FT-10).
+                    try:
+                        temporary.unlink(missing_ok=True)
+                    except OSError:
+                        pass
                 if not summary.get("valid"):
-                    temporary.unlink(missing_ok=True)
                     self._json({"error": summary.get("error", "Dataset inválido.")}, 422)
                     return
-                os.replace(temporary, destination)
                 self._json(
                     {
                         "dataset": {
@@ -1289,6 +1370,16 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"error": f"Error de sistema: {error}"}, 500)
 
 
+class IPv6ThreadingHTTPServer(ThreadingHTTPServer):
+    address_family = socket.AF_INET6
+
+
+def create_server(host: str, port: int) -> ThreadingHTTPServer:
+    """ThreadingHTTPServer usa AF_INET; ``::1`` necesita AF_INET6 (FT-13)."""
+    server_class = IPv6ThreadingHTTPServer if ":" in host else ThreadingHTTPServer
+    return server_class((host, port), Handler)
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="GUI local de fine-tuning para LLM Bridge")
     parser.add_argument("--host", default="127.0.0.1")
@@ -1302,11 +1393,12 @@ def main() -> None:
         raise SystemExit("Por seguridad, la GUI solo puede enlazarse a loopback.")
     RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
     report_external_job()
-    server = ThreadingHTTPServer((args.host, args.port), Handler)
+    server = create_server(args.host, args.port)
     # SIGTERM (kill, cierre de sesión) pasa por el mismo cierre ordenado que
     # Ctrl+C: el job activo se cancela y se espera antes de salir.
     signal.signal(signal.SIGTERM, _exit_on_signal)
-    print(f"Fine-tuning GUI: http://127.0.0.1:{args.port}")
+    display_host = "[::1]" if ":" in args.host else "127.0.0.1"
+    print(f"Fine-tuning GUI: http://{display_host}:{args.port}")
     print("Acceso restringido a la máquina local.")
     try:
         server.serve_forever(poll_interval=0.5)
