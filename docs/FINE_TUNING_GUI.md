@@ -107,7 +107,7 @@ Al pulsar **Preparar y entrenar**, la GUI:
 4. detiene vLLM si estaba activo para liberar GPU;
 5. descarga el modelo si no está completo en caché, usando el HF token si fue proporcionado;
 6. conserva los roles de la conversación y entrena la pérdida solo sobre las respuestas del asistente;
-7. vuelve a iniciar vLLM si estaba activo antes del entrenamiento.
+7. vuelve a iniciar vLLM si estaba activo antes del entrenamiento, espera a que responda y reconcilia la allowlist de adaptadores.
 
 El entrenador trabaja primero en un directorio temporal oculto y solo publica `adapters/<nombre>/` después de guardar correctamente pesos, tokenizer y `manifest.json`. Un fallo no deja un adaptador parcial bloqueando el mismo nombre.
 
@@ -147,6 +147,17 @@ POST /v1/unload_lora_adapter
 y retira el nombre de `LLM_ADAPTER_MODELS` para evitar que el selector del gateway anuncie un adaptador que ya no está cargado.
 
 Si la aplicación web ya estaba ejecutándose, reiníciala después de modificar la allowlist para que relea `.env.local`.
+
+Reiniciar vLLM descarta los LoRA cargados dinámicamente. Por eso, después de cada
+arranque con **Iniciar vLLM** o `./comandos.fish vllm`, y después del reinicio que
+hace el entrenamiento, se ejecuta `trainer/runtime_adapters.py`: cada adaptador de
+`LLM_ADAPTER_MODELS` que vLLM ya no sirve se recarga con la misma validación de base
+que **Cargar en vLLM**, o se retira de la allowlist si no es posible (por ejemplo,
+porque se inició otra base). **Detener vLLM** conserva la allowlist; el siguiente
+arranque la reconcilia.
+
+Si un adaptador sigue en la allowlist sin estar cargado, la GUI muestra
+**Retirar de la allowlist**: lo quita de `LLM_ADAPTER_MODELS` sin llamar a vLLM.
 
 Para eliminar un adaptador, primero pulsa **Descargar de vLLM** si está activo y
 después pulsa **Borrar**. La operación pide confirmación, retira el nombre de la

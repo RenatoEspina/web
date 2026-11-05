@@ -120,6 +120,12 @@ POST /v1/unload_lora_adapter
 
 Al cargar un adaptador, la GUI también lo incorpora a `LLM_ADAPTER_MODELS` en `.env.local`. Al descargarlo, lo retira de esa allowlist. Si el gateway web ya estaba ejecutándose, reinícialo para que relea el entorno.
 
+Un reinicio de vLLM descarta los adaptadores cargados dinámicamente. `./comandos.fish vllm` y `scripts/train-adapter*.sh` (cuando reinician vLLM después de entrenar) ejecutan `trainer/runtime_adapters.py`, que recarga cada adaptador de `LLM_ADAPTER_MODELS` validando su base o lo retira de la allowlist. Se puede ejecutar a mano con vLLM activo:
+
+```bash
+python3 trainer/runtime_adapters.py
+```
+
 El puerto de vLLM permanece ligado a `127.0.0.1`; los endpoints administrativos de LoRA no deben exponerse mediante el túnel público.
 
 Antes de cargar o comprobar un adaptador, la GUI contrasta

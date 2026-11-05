@@ -437,6 +437,7 @@ def status_payload() -> dict[str, Any]:
         "adapters": list_adapters(),
         "job": job,
         "externalJob": external_job_snapshot(),
+        "allowlistedAdapters": allowlisted_adapters(),
     }
 
 
@@ -738,16 +739,35 @@ def _replace_env_file(target: Path, content: str) -> None:
         raise
 
 
+def _allowlist_entry(lines: list[str]) -> tuple[int | None, list[str]]:
+    """Índice de la línea LLM_ADAPTER_MODELS= y los nombres que declara."""
+    entry_index = next(
+        (index for index, line in enumerate(lines) if line.startswith("LLM_ADAPTER_MODELS=")),
+        None,
+    )
+    if entry_index is None:
+        return None, []
+    names = [item.strip() for item in lines[entry_index].split("=", 1)[1].split(",") if item.strip()]
+    return entry_index, names
+
+
+def allowlisted_adapters() -> list[str]:
+    """Adaptadores que el gateway ofrecerá según LLM_ADAPTER_MODELS en .env.local."""
+    env_file = ROOT / ".env.local"
+    try:
+        text = env_file.read_text(encoding="utf-8") if env_file.exists() else ""
+    except OSError:
+        return []
+    return _allowlist_entry(text.splitlines())[1]
+
+
 def set_adapter_allowed_in_env(name: str, allowed: bool, *, rollback_runtime: bool = False,
                                runtime_path: str | None = None) -> bool:
     env_file = ROOT / ".env.local"
     try:
         text = env_file.read_text(encoding="utf-8") if env_file.exists() else ""
         lines = text.splitlines()
-        entry_index = next(
-            (index for index, line in enumerate(lines) if line.startswith("LLM_ADAPTER_MODELS=")),
-            None,
-        )
+        entry_index, current = _allowlist_entry(lines)
         if entry_index is None:
             if not allowed:
                 return False
@@ -756,11 +776,6 @@ def set_adapter_allowed_in_env(name: str, allowed: bool, *, rollback_runtime: bo
             lines.extend(["# Adaptadores LoRA permitidos por el gateway.", f"LLM_ADAPTER_MODELS={name}"])
             changed = True
         else:
-            current = [
-                item.strip()
-                for item in lines[entry_index].split("=", 1)[1].split(",")
-                if item.strip()
-            ]
             updated = list(current)
             if allowed and name not in current:
                 updated.append(name)
@@ -792,6 +807,61 @@ def set_adapter_allowed_in_env(name: str, allowed: bool, *, rollback_runtime: bo
             f"vLLM había dejado el adaptador '{name}' {desired}, pero no fue posible actualizar {env_file.name}. "
             f"El cambio de vLLM fue revertido y el adaptador quedó {restored}; no se aplicó la operación."
         ) from error
+
+
+def load_adapter_runtime(job: Job, name: str) -> str:
+    """Valida la base, prepara la exportación y carga el LoRA en vLLM."""
+    directory = ADAPTER_DIR / name
+    if not (directory / "adapter_config.json").is_file() or not (directory / "adapter_model.safetensors").is_file():
+        raise RuntimeError("El adaptador no contiene los archivos PEFT esperados.")
+    validate_adapter_base(name)
+    runtime_path = prepare_runtime_adapter(job, name)
+    append_log(job, f"Cargando {name} en vLLM...")
+    response = post_vllm(
+        "/v1/load_lora_adapter",
+        {"lora_name": name, "lora_path": runtime_path},
+    )
+    append_log(job, response or "Adaptador cargado.")
+    return runtime_path
+
+
+def reconcile_adapter_allowlist(job: Job) -> dict[str, list[str]]:
+    """Alinea LLM_ADAPTER_MODELS con vLLM después de (re)iniciarlo (FT-03).
+
+    Reiniciar vLLM descarta los LoRA cargados dinámicamente. Cada adaptador de la
+    allowlist que ya no está servido se recarga con la misma validación de base
+    que "Cargar en vLLM"; si no es posible (otra base, archivos ausentes, export
+    fallido), se retira de la allowlist para que el gateway no lo ofrezca.
+    """
+    summary: dict[str, list[str]] = {"kept": [], "reloaded": [], "removed": []}
+    allowlisted = allowlisted_adapters()
+    if not allowlisted:
+        append_log(job, "LLM_ADAPTER_MODELS está vacía; no hay adaptadores que reconciliar.")
+        return summary
+    running, served = fetch_vllm_models()
+    if not running:
+        raise RuntimeError("vLLM no está disponible; no se puede reconciliar LLM_ADAPTER_MODELS.")
+    append_log(job, f"Reconciliando LLM_ADAPTER_MODELS con vLLM: {', '.join(allowlisted)}")
+    for name in allowlisted:
+        if name in served:
+            summary["kept"].append(name)
+            append_log(job, f"{name}: sigue cargado en vLLM.")
+            continue
+        try:
+            load_adapter_runtime(job, validate_adapter_name(name))
+        except JobCancelled:
+            raise
+        except Exception as error:
+            summary["removed"].append(name)
+            append_log(job, f"{name}: se retira de LLM_ADAPTER_MODELS porque no se pudo recargar ({error}).")
+            continue
+        summary["reloaded"].append(name)
+        append_log(job, f"{name}: recargado en vLLM tras el reinicio.")
+    for name in summary["removed"]:
+        set_adapter_allowed_in_env(name, False)
+    if summary["removed"]:
+        append_log(job, "Si la web ya estaba activa, reiníciala para que relea .env.local.")
+    return summary
 
 
 def setup_environment(job: Job, *, automatic: bool = False) -> None:
@@ -888,18 +958,8 @@ def run_action(job: Job, payload: dict[str, Any]) -> None:
         return
     if action in {"load-adapter", "unload-adapter"}:
         name = validate_adapter_name(payload.get("name"))
-        directory = ADAPTER_DIR / name
         if action == "load-adapter":
-            if not (directory / "adapter_config.json").is_file() or not (directory / "adapter_model.safetensors").is_file():
-                raise RuntimeError("El adaptador no contiene los archivos PEFT esperados.")
-            validate_adapter_base(name)
-            runtime_path = prepare_runtime_adapter(job, name)
-            append_log(job, f"Cargando {name} en vLLM...")
-            response = post_vllm(
-                "/v1/load_lora_adapter",
-                {"lora_name": name, "lora_path": runtime_path},
-            )
-            append_log(job, response or "Adaptador cargado.")
+            runtime_path = load_adapter_runtime(job, name)
             set_adapter_allowed_in_env(name, True, rollback_runtime=True)
             append_log(
                 job,
@@ -910,6 +970,21 @@ def run_action(job: Job, payload: dict[str, Any]) -> None:
                 "runtimeLoaded": True,
                 "runtimePath": runtime_path,
                 "inferenceVerified": False,
+                "allowlistUpdated": True,
+                "gatewayRestartRequired": True,
+            }
+        elif name in allowlisted_adapters() and not adapter_is_loaded(name):
+            # Tras un reinicio de vLLM el adaptador puede seguir en la allowlist
+            # sin estar servido: se permite retirarlo sin tocar vLLM (FT-03).
+            append_log(job, f"{name} no está cargado en vLLM; solo se retira de LLM_ADAPTER_MODELS.")
+            set_adapter_allowed_in_env(name, False)
+            append_log(
+                job,
+                "Adaptador retirado de LLM_ADAPTER_MODELS. Si la web ya estaba activa, reiníciala para que relea el entorno.",
+            )
+            job.result = {
+                "adapter": name,
+                "runtimeLoaded": False,
                 "allowlistUpdated": True,
                 "gatewayRestartRequired": True,
             }
