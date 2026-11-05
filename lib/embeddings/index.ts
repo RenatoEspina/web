@@ -145,5 +145,68 @@ export async function embedText(
   return result?.[0] ?? null;
 }
 
+export type EmbeddingHealth = {
+  enabled: boolean;
+  available: boolean;
+  error?: string;
+};
+
+type ModelListResponse = {
+  models?: Array<{ name?: unknown; model?: unknown }>;
+  data?: Array<{ id?: unknown }>;
+};
+
+function listedModels(provider: EmbeddingConfig["provider"], data: ModelListResponse): string[] {
+  const names = provider === "ollama"
+    ? (data.models ?? []).flatMap((item) => [item.name, item.model])
+    : (data.data ?? []).map((item) => item.id);
+  return names.filter((name): name is string => typeof name === "string");
+}
+
+/**
+ * Checks that the embedding service answers and serves the configured model.
+ * It never throws: indexing already degrades to lexical retrieval, so the
+ * result only feeds the status shown in the interface.
+ */
+export async function checkEmbeddings(signal: AbortSignal): Promise<EmbeddingHealth> {
+  let config: EmbeddingConfig;
+  try {
+    config = getEmbeddingConfig();
+  } catch {
+    return { enabled: true, available: false, error: "La configuración de embeddings no es válida." };
+  }
+  if (!config.enabled) return { enabled: false, available: false };
+
+  const path = config.provider === "ollama" ? "/api/tags" : "/v1/models";
+  let response: Response;
+  try {
+    response = await fetch(endpoint(config.baseUrl, path), {
+      method: "GET",
+      headers: headers(config),
+      signal,
+    });
+  } catch {
+    return { enabled: true, available: false, error: `${config.provider} no responde.` };
+  }
+
+  if (!response.ok) {
+    return { enabled: true, available: false, error: `${config.provider} respondió HTTP ${response.status}.` };
+  }
+
+  let data: ModelListResponse;
+  try {
+    data = await response.json() as ModelListResponse;
+  } catch {
+    return { enabled: true, available: false, error: `${config.provider} devolvió JSON inválido.` };
+  }
+
+  const models = listedModels(config.provider, data ?? {});
+  const served = models.includes(config.model) ||
+    (config.provider === "ollama" && !config.model.includes(":") && models.includes(`${config.model}:latest`));
+  return served
+    ? { enabled: true, available: true }
+    : { enabled: true, available: false, error: `${config.provider} no tiene el modelo ${config.model}.` };
+}
+
 export { getEmbeddingConfig, publicEmbeddingConfig } from "./config";
 export type { EmbeddingConfig, EmbeddingInputType, EmbeddingProviderName } from "./types";

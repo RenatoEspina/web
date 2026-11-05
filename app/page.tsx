@@ -37,6 +37,7 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import type { DocumentSummary, KnowledgeMode, KnowledgeSource } from "@/lib/documents";
+import { embeddingStatusLabel, knowledgeHint } from "@/lib/ui/knowledge-status";
 
 type InferenceMetrics = {
   model?: string;
@@ -150,16 +151,28 @@ async function responseData(response: Response): Promise<Record<string, unknown>
   }
 }
 
-async function getConnectionStatus(token: string): Promise<ConnectionStatus> {
+type HealthCheck = {
+  status: ConnectionStatus;
+  embeddingAvailable: boolean | null;
+};
+
+async function getConnectionStatus(token: string): Promise<HealthCheck> {
   try {
     const response = await fetch("/api/health", {
       headers: authHeaders(token),
       cache: "no-store",
     });
-    if (response.status === 401) return "locked";
-    return response.ok ? "online" : "offline";
+    if (response.status === 401) return { status: "locked", embeddingAvailable: null };
+    const data = await responseData(response);
+    const embedding = data.embedding && typeof data.embedding === "object"
+      ? data.embedding as Record<string, unknown>
+      : null;
+    return {
+      status: response.ok ? "online" : "offline",
+      embeddingAvailable: typeof embedding?.available === "boolean" ? embedding.available : null,
+    };
   } catch {
-    return "offline";
+    return { status: "offline", embeddingAvailable: null };
   }
 }
 
@@ -177,6 +190,7 @@ export default function Home() {
   const [showTokenDialog, setShowTokenDialog] = useState(false);
   const [tokenError, setTokenError] = useState("");
   const [status, setStatus] = useState<ConnectionStatus>("checking");
+  const [embeddingAvailable, setEmbeddingAvailable] = useState<boolean | null>(null);
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState("");
@@ -258,8 +272,10 @@ export default function Home() {
           return;
         }
 
-        const nextStatus = await getConnectionStatus(storedToken);
+        const health = await getConnectionStatus(storedToken);
+        const nextStatus = health.status;
         setStatus(nextStatus);
+        setEmbeddingAvailable(health.embeddingAvailable);
         if (nextStatus === "locked") {
           window.sessionStorage.removeItem(TOKEN_STORAGE_KEY);
           setAuthToken("");
@@ -380,7 +396,9 @@ export default function Home() {
     setAuthToken(nextToken);
     setTokenError("");
     setStatus("checking");
-    const nextStatus = await getConnectionStatus(nextToken);
+    const health = await getConnectionStatus(nextToken);
+    const nextStatus = health.status;
+    setEmbeddingAvailable(health.embeddingAvailable);
 
     if (nextStatus === "locked") {
       window.sessionStorage.removeItem(TOKEN_STORAGE_KEY);
@@ -544,7 +562,7 @@ export default function Home() {
           <span className="meta-spacer" />
           {config && config.models.length > 1 && <Select value={selectedModel} onValueChange={handleModelChange} disabled={loading}><SelectTrigger className="knowledge-select" aria-label="Modelo o adaptador"><SelectValue /></SelectTrigger><SelectContent>{config.models.map((model) => <SelectItem value={model} key={model}>{model}</SelectItem>)}</SelectContent></Select>}
           <Link href="/fine-tune" className="token-link"><FlaskConical size={13} /> Fine-tuning</Link>
-          <span className="secure-label"><ShieldCheck size={14} /> PDF en memoria · embeddings {config?.embedding.enabled ? "activos" : "desactivados"}</span>
+          <span className="secure-label"><ShieldCheck size={14} /> PDF en memoria · {embeddingStatusLabel(config?.embedding.enabled === true, embeddingAvailable)}</span>
         </div>
 
         <section className="knowledge-bar" aria-label="Biblioteca documental">
@@ -620,13 +638,7 @@ export default function Home() {
           ) : (
             <p className="knowledge-empty">Agrega un PDF para consultar su contenido desde el chat.</p>
           )}
-          <p className="knowledge-hint">
-            {knowledgeMode === "cag"
-              ? "CAG reutiliza el contexto documental en orden y lo trunca si supera el límite configurado."
-              : knowledgeMode === "rag"
-                ? "RAG combina embeddings semánticos y coincidencia léxica para recuperar los fragmentos más relacionados."
-                : "El chat responderá sin consultar los PDF."}
-          </p>
+          <p className="knowledge-hint">{knowledgeHint(knowledgeMode, selectedDocumentIds.length)}</p>
           {documentError && <p className="document-error" role="alert">{documentError}</p>}
         </section>
 
