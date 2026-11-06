@@ -111,7 +111,16 @@ Al pulsar **Preparar y entrenar**, la GUI:
 
 El entrenador trabaja primero en un directorio temporal oculto y solo publica `adapters/<nombre>/` después de guardar correctamente pesos, tokenizer y `manifest.json`. Un fallo no deja un adaptador parcial bloqueando el mismo nombre.
 
-Solo se permite una operación pesada simultánea. El trabajo actual se puede cancelar desde la terminal integrada.
+Solo se permite una operación simultánea, también entre procesos: la GUI básica,
+la GUI Axolotl y `./comandos.fish fine-tune-train` comparten el lock
+`.runtime/gpu.lock`. Mientras otro proceso lo tiene, la acción se rechaza con un
+mensaje que nombra el lock; nunca queda esperando. Los scripts de entrenamiento
+lanzados desde la GUI heredan el lock que ya tomó el panel.
+
+El trabajo actual se puede cancelar desde la terminal integrada. La cancelación
+envía `SIGINT` al grupo de procesos del job; si sigue activo tras unos 10 s envía
+`SIGTERM`, y tras otros 5 s `SIGKILL`. El job queda como `cancelled` aunque un
+subproceso desacoplado mantenga abierta la salida.
 
 ### 4. Iniciar o detener vLLM
 
@@ -193,6 +202,15 @@ La carga dinámica de LoRA requiere `VLLM_ALLOW_RUNTIME_LORA_UPDATING=True`. Esa
 ## Cerrar el panel
 
 Pulsa **Cerrar panel**. Esto detiene el servidor administrativo local; los adaptadores y servicios Docker quedan en el estado actual.
+
+Con una operación en curso, **Cerrar panel** se rechaza: cancélala o espera a que
+termine. Si el servidor recibe `SIGTERM` o `Ctrl+C`, primero cancela el job activo
+con la misma escalada y espera a que termine antes de salir.
+
+Mientras corre, el PGID del job queda registrado en `.runtime/gpu-job.json`. Si un
+proceso de una sesión anterior sigue vivo (por ejemplo, porque el panel se mató con
+`SIGKILL`), al arrancar el panel lo informa en su log, la terminal lo muestra como
+operación externa y las nuevas acciones se rechazan hasta que termine.
 
 Para depurar el lanzador:
 
