@@ -57,9 +57,20 @@ trainer/check_environment.py
 
 Este script comprueba PyTorch, CUDA, GPU, `bitsandbytes` y una cuantización NF4 real.
 
+El estado distingue dos cosas: que el venv exista (**Entorno: sin verificar**) y que
+la última comprobación real haya sido correcta (**Entorno: verificado**, en verde).
+El resultado de **Comprobar GPU**, de **Preparar / actualizar entorno** y de la
+verificación previa a cada entrenamiento se guarda en
+`.runtime/environment-check.<script>.json`, uno por backend. Deja de contar si la
+comprobación siguiente falla, si se vuelve a preparar el entorno o si el venv se
+recrea. La comprobación por CLI (`./comandos.fish fine-tune-check`) no actualiza
+ese estado.
+
 ### 2. Subir el dataset
 
 Selecciona un `.jsonl`. Antes de guardarlo en `trainer/datasets/`, la GUI lo valida con `trainer/dataset_validation.py`, que es el validador canónico del proyecto.
+
+Cualquier error al analizarlo, incluido un JSON demasiado anidado, se informa como dataset inválido; el archivo temporal de la subida se borra siempre.
 
 `trainer/examples/base-training.jsonl` sirve únicamente para comprobar el pipeline. No es un dataset suficiente para medir calidad real.
 
@@ -198,7 +209,7 @@ Para experimentar con el corpus incluido, sigue la
 
 El panel es una herramienta administrativa local:
 
-- solo acepta `127.0.0.1`, `localhost` o `::1`;
+- solo acepta `127.0.0.1`, `localhost` o `::1` (con `--host ::1` escucha por IPv6 en `http://[::1]:<puerto>`);
 - el lanzador usa `127.0.0.1`;
 - las operaciones mutables requieren un token aleatorio de sesión en `X-Fine-Tune-Token`;
 - no habilita CORS;

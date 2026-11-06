@@ -76,8 +76,8 @@ def process_group_alive(pgid: int) -> bool:
     return True
 
 
-def write_job_record(path: Path, record: dict[str, Any]) -> None:
-    """Escribe el registro de forma atómica y legible solo por el usuario."""
+def write_private_json(path: Path, record: dict[str, Any]) -> None:
+    """Escribe un registro JSON de forma atómica y legible solo por el usuario."""
     path.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
     try:
@@ -89,12 +89,17 @@ def write_job_record(path: Path, record: dict[str, Any]) -> None:
         raise
 
 
-def read_job_record(path: Path) -> dict[str, Any] | None:
+def read_json_record(path: Path) -> dict[str, Any] | None:
     try:
         record = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
-    if not isinstance(record, dict) or not isinstance(record.get("pgid"), int) or record["pgid"] <= 1:
+    return record if isinstance(record, dict) else None
+
+
+def read_job_record(path: Path) -> dict[str, Any] | None:
+    record = read_json_record(path)
+    if record is None or not isinstance(record.get("pgid"), int) or record["pgid"] <= 1:
         return None
     return record
 

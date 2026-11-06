@@ -66,7 +66,18 @@ TRAINING_ARGS = [
 ]
 
 
-class BasicGuiValidationTests(unittest.TestCase):
+class IsolatedRuntimeTestCase(unittest.TestCase):
+    """Los resultados persistidos (.runtime/) quedan en un directorio temporal."""
+
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        patcher = mock.patch.object(gui_server, "RUNTIME_DIR", Path(temporary.name) / ".runtime")
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+
+class BasicGuiValidationTests(IsolatedRuntimeTestCase):
     def effects(self):
         manager = mock.Mock()
         patches = [
@@ -117,7 +128,7 @@ class BasicGuiValidationTests(unittest.TestCase):
         self.assertEqual(manager.mock_calls, [])
 
 
-class AxolotlGuiValidationTests(unittest.TestCase):
+class AxolotlGuiValidationTests(IsolatedRuntimeTestCase):
     def effects(self):
         manager = mock.Mock()
         patches = [

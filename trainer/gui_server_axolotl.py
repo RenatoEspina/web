@@ -235,7 +235,8 @@ def run_axolotl_train(job: core.Job, payload: dict[str, Any]) -> None:
 
     if not axolotl_environment_ready():
         setup_axolotl_environment(job, automatic=True)
-    check_axolotl_environment(job, "Verificando entorno Axolotl")
+    core.verify_environment(job, "Verificando entorno Axolotl",
+                            check=check_axolotl_environment, check_script=AXOLOTL_CHECK)
 
     command = ["bash", str(AXOLOTL_TRAIN_SCRIPT), *request.script_arguments()]
     env = core.environment_with_hf_token(request.hf_token)
@@ -268,7 +269,7 @@ def status_payload() -> dict[str, Any]:
     payload["trainingBackend"] = "axolotl"
     payload["axolotlVersion"] = AXOLOTL_VERSION
     payload["axolotlPythonVersion"] = AXOLOTL_PYTHON_VERSION
-    payload["environmentReady"] = axolotl_environment_ready()
+    payload.update(core.environment_status(axolotl_environment_ready(), check_script=AXOLOTL_CHECK))
     return payload
 
 
