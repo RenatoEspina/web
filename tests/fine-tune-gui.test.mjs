@@ -20,7 +20,7 @@ test("la GUI de fine-tuning queda restringida a loopback", () => {
 });
 
 test("la GUI solo admite acciones administrativas predefinidas", () => {
-  assert.match(server, /allowed = \{"setup", "check", "train", "start-vllm", "stop-vllm", "load-adapter", "unload-adapter", "verify-adapter", "delete-adapter"\}/);
+  assert.match(server, /allowed = \{"setup", "check", "train", "start-vllm", "stop-vllm", "load-adapter", "unload-adapter", "verify-adapter", "delete-adapter", "reconcile-adapters"\}/);
   assert.match(server, /Dataset fuera de las carpetas permitidas/);
   assert.match(server, /x-fine-tune-token/i);
 });
@@ -171,4 +171,25 @@ test("el HF token de entrenamiento es efímero y no viaja por argv", () => {
   assert.match(server, /run_command\(job, command, env=training_env/);
   assert.doesNotMatch(server, /--hf-token/);
   assert.doesNotMatch(server, /os\.environ\["HF_TOKEN"\]\s*=/);
+});
+
+test("la GUI permite retirar de la allowlist un adaptador que vLLM ya no sirve", () => {
+  assert.match(gui, /allowlisted=new Set\(status\.allowlistedAdapters\|\|\[\]\)/);
+  assert.match(gui, /!isLoaded&&allowlisted\.has\(a\.name\)\?`<button class="btn secondary" data-adapter="\$\{escapeHtml\(a\.name\)\}" data-action="unload-adapter">Retirar de la allowlist<\/button>`/);
+  assert.match(server, /"allowlistedAdapters": allowlisted_adapters\(\)/);
+  assert.match(server, /solo se retira de LLM_ADAPTER_MODELS/);
+});
+
+test("el badge verde del entorno depende de una comprobación real, no solo del venv", () => {
+  assert.match(gui, /status\.environmentVerified\?"Entorno: verificado":status\.venvPresent\?"Entorno: sin verificar":"Entorno: pendiente"/);
+  assert.match(gui, /\$\("envBadge"\)\.className=`badge \$\{status\.environmentVerified\?"good":""\}`/);
+  assert.match(gui, /if\(index===0\)return Boolean\(currentStatus\?\.environmentVerified\)/);
+  assert.doesNotMatch(gui, /Entorno: listo/);
+  assert.match(server, /"environmentVerified": verified/);
+});
+
+test("la GUI completa sola una reconciliación de la allowlist interrumpida", () => {
+  assert.match(gui, /"reconcile-adapters":"Reconciliando allowlist LoRA"/);
+  assert.match(server, /RECONCILE_MARKER_FILENAME = "adapters-reconcile-pending"/);
+  assert.match(server, /threading\.Thread\(target=watch_pending_reconcile/);
 });

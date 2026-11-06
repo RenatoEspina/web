@@ -57,9 +57,20 @@ trainer/check_environment.py
 
 Este script comprueba PyTorch, CUDA, GPU, `bitsandbytes` y una cuantización NF4 real.
 
+El estado distingue dos cosas: que el venv exista (**Entorno: sin verificar**) y que
+la última comprobación real haya sido correcta (**Entorno: verificado**, en verde).
+El resultado de **Comprobar GPU**, de **Preparar / actualizar entorno** y de la
+verificación previa a cada entrenamiento se guarda en
+`.runtime/environment-check.<script>.json`, uno por backend. Deja de contar si la
+comprobación siguiente falla, si se vuelve a preparar el entorno o si el venv se
+recrea. La comprobación por CLI (`./comandos.fish fine-tune-check`) no actualiza
+ese estado.
+
 ### 2. Subir el dataset
 
 Selecciona un `.jsonl`. Antes de guardarlo en `trainer/datasets/`, la GUI lo valida con `trainer/dataset_validation.py`, que es el validador canónico del proyecto.
+
+Cualquier error al analizarlo, incluido un JSON con más de 512 niveles de anidamiento, se informa como dataset inválido; el archivo temporal de la subida se borra siempre.
 
 `trainer/examples/base-training.jsonl` sirve únicamente para comprobar el pipeline. No es un dataset suficiente para medir calidad real.
 
@@ -107,11 +118,23 @@ Al pulsar **Preparar y entrenar**, la GUI:
 4. detiene vLLM si estaba activo para liberar GPU;
 5. descarga el modelo si no está completo en caché, usando el HF token si fue proporcionado;
 6. conserva los roles de la conversación y entrena la pérdida solo sobre las respuestas del asistente;
-7. vuelve a iniciar vLLM si estaba activo antes del entrenamiento.
+7. vuelve a iniciar vLLM si estaba activo antes del entrenamiento, espera a que responda y reconcilia la allowlist de adaptadores.
 
 El entrenador trabaja primero en un directorio temporal oculto y solo publica `adapters/<nombre>/` después de guardar correctamente pesos, tokenizer y `manifest.json`. Un fallo no deja un adaptador parcial bloqueando el mismo nombre.
 
-Solo se permite una operación pesada simultánea. El trabajo actual se puede cancelar desde la terminal integrada.
+Solo se permite una operación simultánea, también entre procesos: la GUI básica,
+la GUI Axolotl y `./comandos.fish fine-tune-train` comparten el lock
+`.runtime/gpu.lock`. Mientras otro proceso lo tiene, la acción se rechaza con un
+mensaje que nombra el lock; nunca queda esperando. Los scripts de entrenamiento
+lanzados desde la GUI heredan el lock que ya tomó el panel.
+
+El trabajo actual se puede cancelar desde la terminal integrada. La cancelación
+envía `SIGINT` al grupo de procesos del job; si sigue activo tras unos 10 s envía
+`SIGTERM`, y tras otros 5 s `SIGKILL`. El job queda como `cancelled` aunque un
+subproceso desacoplado mantenga abierta la salida, pero nunca mientras quede vivo
+algún proceso de su grupo (por ejemplo, un worker que ignora `SIGINT`): hasta
+entonces sigue en curso, conserva `.runtime/gpu-job.json` y **Cerrar panel** se
+rechaza.
 
 ### 4. Iniciar o detener vLLM
 
@@ -138,6 +161,27 @@ POST /v1/unload_lora_adapter
 y retira el nombre de `LLM_ADAPTER_MODELS` para evitar que el selector del gateway anuncie un adaptador que ya no está cargado.
 
 Si la aplicación web ya estaba ejecutándose, reiníciala después de modificar la allowlist para que relea `.env.local`.
+
+Reiniciar vLLM descarta los LoRA cargados dinámicamente. Por eso, después de cada
+arranque con **Iniciar vLLM** o `./comandos.fish vllm`, y después del reinicio que
+hace el entrenamiento, se ejecuta `trainer/runtime_adapters.py`: cada adaptador de
+`LLM_ADAPTER_MODELS` que vLLM ya no sirve se recarga con la misma validación de base
+que **Cargar en vLLM**. Solo se retira de la allowlist una entrada inválida en sí
+misma: el adaptador ya no existe, sus metadatos son inválidos o vLLM sirve otra base.
+Un fallo de infraestructura (intérprete o exportación, error de vLLM) nunca retira un
+adaptador válido: se conserva y la operación termina con error. Desde la GUI Axolotl
+la exportación usa el intérprete de `trainer/.venv-axolotl`. **Detener vLLM**
+conserva la allowlist; el siguiente arranque la reconcilia.
+
+Si se cancela un entrenamiento mientras vLLM se reinicia, la escalada de la
+cancelación interrumpe la reconciliación. Por eso el entrenamiento deja la marca
+`.runtime/adapters-reconcile-pending` al detener vLLM, y solo una reconciliación
+completa la borra. Mientras el panel está abierto, cuando vLLM vuelve a responder y
+no hay otra operación en curso, inicia solo una operación **Reconciliando allowlist
+LoRA**. Si falla, la reintenta al cabo de un minuto.
+
+Si un adaptador sigue en la allowlist sin estar cargado, la GUI muestra
+**Retirar de la allowlist**: lo quita de `LLM_ADAPTER_MODELS` sin llamar a vLLM.
 
 Para eliminar un adaptador, primero pulsa **Descargar de vLLM** si está activo y
 después pulsa **Borrar**. La operación pide confirmación, retira el nombre de la
@@ -178,7 +222,7 @@ Para experimentar con el corpus incluido, sigue la
 
 El panel es una herramienta administrativa local:
 
-- solo acepta `127.0.0.1`, `localhost` o `::1`;
+- solo acepta `127.0.0.1`, `localhost` o `::1` (con `--host ::1` escucha por IPv6 en `http://[::1]:<puerto>`);
 - el lanzador usa `127.0.0.1`;
 - las operaciones mutables requieren un token aleatorio de sesión en `X-Fine-Tune-Token`;
 - no habilita CORS;
@@ -186,6 +230,8 @@ El panel es una herramienta administrativa local:
 - los adaptadores solo se cargan desde `adapters/` y sus nombres se validan;
 - los HF tokens opcionales solo viven en memoria y en el entorno del proceso hijo correspondiente;
 - no existe un endpoint para ejecutar comandos arbitrarios;
+- cada acción valida su payload completo (nombre, modelo, token e hiperparámetros) antes de cualquier efecto, incluida la reparación de permisos de `adapters/` con un contenedor root;
+- al reescribir `.env.local` (allowlist desde la GUI, `LLM_MODEL` desde `./comandos.fish vllm`) se conserva el modo del archivo; uno nuevo se crea con modo `0600` y un enlace simbólico se mantiene, actualizando el archivo al que apunta;
 - vLLM continúa publicado en el host únicamente como `127.0.0.1:8000`.
 
 La carga dinámica de LoRA requiere `VLLM_ALLOW_RUNTIME_LORA_UPDATING=True`. Esa API no debe exponerse a clientes no confiables; en este proyecto permanece detrás de loopback.
@@ -193,6 +239,15 @@ La carga dinámica de LoRA requiere `VLLM_ALLOW_RUNTIME_LORA_UPDATING=True`. Esa
 ## Cerrar el panel
 
 Pulsa **Cerrar panel**. Esto detiene el servidor administrativo local; los adaptadores y servicios Docker quedan en el estado actual.
+
+Con una operación en curso, **Cerrar panel** se rechaza: cancélala o espera a que
+termine. Si el servidor recibe `SIGTERM` o `Ctrl+C`, primero cancela el job activo
+con la misma escalada y espera a que termine antes de salir.
+
+Mientras corre, el PGID del job queda registrado en `.runtime/gpu-job.json`. Si un
+proceso de una sesión anterior sigue vivo (por ejemplo, porque el panel se mató con
+`SIGKILL`), al arrancar el panel lo informa en su log, la terminal lo muestra como
+operación externa y las nuevas acciones se rechazan hasta que termine.
 
 Para depurar el lanzador:
 

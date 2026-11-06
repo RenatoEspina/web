@@ -138,11 +138,17 @@ Este experimento cambia deliberadamente dos cosas que podían limitar la calidad
 - **datos**: el corpus pasa de 96 ejemplos SFT en español a **160 en inglés**, y
   añade un validation set independiente de 24 ejemplos.
 
-Por ahora dejamos rank, alpha, dropout, learning rate, epochs y `all-linear`
-iguales. Si la calidad mejora, podremos atribuir buena parte del cambio al enfoque
-de datos/selección. Si `eval_loss` no mejora o la evaluación final continúa mala,
-el siguiente experimento debería cambiar una sola variable a la vez (por ejemplo
-learning rate o módulos LoRA) para evitar confundir causas.
+Este experimento dejó rank, alpha, dropout, learning rate, epochs y los módulos
+LoRA (`all-linear` en ese momento) iguales. Si la calidad mejora, podremos atribuir
+buena parte del cambio al enfoque de datos/selección. Si `eval_loss` no mejora o la
+evaluación final continúa mala, el siguiente experimento debería cambiar una sola
+variable a la vez (por ejemplo learning rate o módulos LoRA) para evitar confundir
+causas.
+
+> **Estado actual:** con Qwen3.5, los dos backends entrenan `attention-mlp` por
+> defecto, porque `all-linear` degeneraba en bucles de repetición (ver
+> `docs/FINE_TUNING_DEBUG.md`). Compara solo adapters con el mismo
+> `parameters.targetModules` en su `manifest.json`.
 
 ## Corpus y licencia
 

@@ -253,9 +253,19 @@ end
 function persist_llm_model
     set -l model $argv[1]
     set -l env_file "$project_dir/.env.local"
+    # Un .env.local enlazado se conserva: se reescribe el archivo apuntado.
+    if test -L "$env_file"; and test -e "$env_file"
+        set env_file (path resolve -- "$env_file")
+    end
     set -l temporary "$env_file.tmp"
     require_command awk
 
+    # .env.local puede contener APP_TOKEN o API keys: el temporal nace privado
+    # (umask 077) y después copia el modo del original, así reescribir LLM_MODEL
+    # nunca amplía sus permisos. Un archivo nuevo queda con modo 0600.
+    set -l previous_umask (umask)
+    umask 077
+    rm -f -- "$temporary"
     if test -f "$env_file"
         awk -v model="$model" '
             BEGIN { found = 0 }
@@ -263,11 +273,35 @@ function persist_llm_model
             { print }
             END { if (!found) print "LLM_MODEL=" model }
         ' "$env_file" > "$temporary"; or fail "No fue posible preparar la actualización de LLM_MODEL."
+        chmod --reference="$env_file" -- "$temporary"; or fail "No fue posible conservar los permisos de .env.local."
     else
         printf 'LLM_MODEL=%s\n' "$model" > "$temporary"; or fail "No fue posible crear .env.local."
     end
+    umask $previous_umask
 
     mv "$temporary" "$env_file"; or fail "No fue posible actualizar .env.local."
+end
+
+function reconcile_adapters
+    # Reiniciar vLLM descarta los LoRA cargados dinámicamente: recarga los de
+    # LLM_ADAPTER_MODELS con validación de base o los retira de la allowlist.
+    set -l python_command ""
+    for candidate in python3.13 python3 python
+        if command -sq $candidate
+            set python_command $candidate
+            break
+        end
+    end
+    if test -z "$python_command"
+        # Sin Python no se puede verificar la allowlist: es un error solo si tiene adaptadores.
+        if test -f "$project_dir/.env.local"; and grep -Eq '^LLM_ADAPTER_MODELS=.*[^[:space:],]' "$project_dir/.env.local"
+            echo "Error: no se encontró Python para reconciliar LLM_ADAPTER_MODELS." >&2
+            return 1
+        end
+        return 0
+    end
+    # Falla cerrado: un adaptador que no se pudo verificar se conserva y el estado es de error.
+    $python_command trainer/runtime_adapters.py $argv
 end
 
 function prepare_embeddings
@@ -389,9 +423,17 @@ function start_vllm
     echo "LLM_MODEL sincronizado en .env.local: $model"
     echo "Si la web ya estaba ejecutándose, reiníciala para que relea .env.local."
 
+    # Un LoRA entrenado sobre la base anterior no se recarga: se retira.
+    set -l reconcile_failed false
+    reconcile_adapters; or set reconcile_failed true
+
     # Con vLLM ya iniciado, confirma que Ollama realmente puede servir embeddings.
     verify_embeddings "$default_embedding_model"
     compose ps vllm ollama
+
+    if test "$reconcile_failed" = true
+        fail "vLLM está activo, pero no se pudo reconciliar LLM_ADAPTER_MODELS; los adaptadores sin verificar siguen en la allowlist. Revisa el log anterior."
+    end
 end
 
 function start_ollama

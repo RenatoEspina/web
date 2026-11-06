@@ -85,6 +85,8 @@ El comando principal es:
 
 Internamente llama a `scripts/train-adapter.sh`. Si vLLM está activo, el script lo detiene antes del entrenamiento y lo vuelve a iniciar al finalizar para liberar VRAM durante QLoRA.
 
+El script toma el lock `.runtime/gpu.lock` con `flock` antes de cualquier otro paso. Es el mismo lock que usan las GUIs de fine-tuning: si otra GUI o un entrenamiento por CLI lo tiene, el comando termina de inmediato con un error en lugar de competir por la GPU.
+
 El entrenador escribe primero en un directorio temporal oculto bajo `adapters/`. Solo cuando el entrenamiento, los pesos, tokenizer y `manifest.json` se han guardado correctamente publica el directorio final mediante un rename atómico. Un entrenamiento fallido no deja un adaptador parcial ocupando el nombre solicitado.
 
 El resultado final tiene una estructura similar a:
@@ -117,6 +119,14 @@ POST /v1/unload_lora_adapter
 ```
 
 Al cargar un adaptador, la GUI también lo incorpora a `LLM_ADAPTER_MODELS` en `.env.local`. Al descargarlo, lo retira de esa allowlist. Si el gateway web ya estaba ejecutándose, reinícialo para que relea el entorno.
+
+Un reinicio de vLLM descarta los adaptadores cargados dinámicamente. `./comandos.fish vllm` y `scripts/train-adapter*.sh` (cuando reinician vLLM después de entrenar) ejecutan `trainer/runtime_adapters.py`, que recarga cada adaptador de `LLM_ADAPTER_MODELS` validando su base. Solo retira de la allowlist las entradas inválidas en sí mismas: el adaptador ya no existe, sus metadatos son inválidos o vLLM sirve otra base. Ante un fallo de infraestructura (falta el intérprete, falla la exportación o vLLM responde con error) conserva el adaptador y termina con código 1; `./comandos.fish vllm` también termina con error en ese caso. La exportación usa `FINE_TUNE_PYTHON`, el venv básico o, si es el único disponible, `trainer/.venv-axolotl`.
+
+Si una cancelación (`Ctrl+C`) interrumpe la reconciliación posterior al entrenamiento, queda pendiente en `.runtime/adapters-reconcile-pending`. La completa la GUI de fine-tuning cuando vLLM vuelve a responder, el siguiente `./comandos.fish vllm` o una ejecución manual. Se puede ejecutar a mano con vLLM activo:
+
+```bash
+python3 trainer/runtime_adapters.py
+```
 
 El puerto de vLLM permanece ligado a `127.0.0.1`; los endpoints administrativos de LoRA no deben exponerse mediante el túnel público.
 

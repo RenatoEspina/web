@@ -13,7 +13,9 @@ import secrets
 import shlex
 import shutil
 import signal
+import socket
 import subprocess
+import tempfile
 import threading
 import time
 import uuid
@@ -26,6 +28,7 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+import runtime_lock
 from dataset_validation import load_jsonl
 from vllm_export import export_destination, needs_export, read_config, validate_export
 
@@ -38,6 +41,11 @@ ADAPTER_DIR = ROOT / "adapters"
 RUNTIME_DIR = ROOT / ".runtime"
 ENVIRONMENT_CHECK = TRAINER_DIR / "check_environment.py"
 MAX_BODY_BYTES = 40 * 1024 * 1024
+# json.loads only fails on deep nesting when the interpreter runs out of stack,
+# which varies between machines; this fixed limit makes the rejection
+# deterministic. Real payloads and dataset lines nest a handful of levels.
+MAX_JSON_DEPTH = 512
+JSON_DEPTH_TOKEN = re.compile(r'"[^"\\]*(?:\\.[^"\\]*)*"|[\[\]{}]')
 MAX_LOG_LINES = 2500
 MAX_HF_TOKEN_LENGTH = 4096
 SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
@@ -50,6 +58,19 @@ EVALUATION_DATASETS = {"evaluation.jsonl"}
 # usan scripts/train-adapter.sh y trainer/mix_replay.py.
 VALIDATION_SUFFIX = "-validation.jsonl"
 DEFAULT_VLLM_IMAGE = "vllm/vllm-openai:v0.29.0"
+# Cancelación escalonada sobre el grupo de procesos del job: SIGINT, espera,
+# SIGTERM, espera y SIGKILL. Si un proceso desacoplado conserva el stdout, el
+# job se da por cancelado tras CANCEL_OUTPUT_DRAIN_SECONDS sin esperar su EOF.
+CANCEL_SIGINT_GRACE_SECONDS = 10.0
+CANCEL_SIGTERM_GRACE_SECONDS = 5.0
+CANCEL_OUTPUT_DRAIN_SECONDS = 2.0
+# Una reconciliación de la allowlist interrumpida (por ejemplo, al cancelar un
+# entrenamiento mientras vLLM se reiniciaba) deja esta marca en .runtime/. El
+# panel la completa automáticamente cuando vLLM vuelve a responder.
+RECONCILE_MARKER_FILENAME = "adapters-reconcile-pending"
+RECONCILE_POLL_SECONDS = 5.0
+RECONCILE_RETRY_SECONDS = 60.0
+_LAST_AUTO_RECONCILE_FAILURE: float | None = None
 
 
 @dataclass
@@ -64,6 +85,7 @@ class Job:
     process: subprocess.Popen[str] | None = None
     cancel_requested: bool = False
     result: dict[str, Any] | None = None
+    gpu_lock: runtime_lock.GpuLock | None = None
 
 
 STATE_LOCK = threading.Lock()
@@ -73,6 +95,30 @@ CSRF_TOKEN = secrets.token_urlsafe(32)
 
 class JobCancelled(RuntimeError):
     pass
+
+
+class AdapterBaseMismatch(RuntimeError):
+    """vLLM sirve una base conocida distinta de la usada para entrenar el adaptador."""
+
+
+class InvalidAllowlistEntry(ValueError):
+    """La entrada de LLM_ADAPTER_MODELS no corresponde a un adaptador cargable."""
+
+
+def gpu_lock_path() -> Path:
+    return RUNTIME_DIR / runtime_lock.LOCK_FILENAME
+
+
+def job_record_path() -> Path:
+    return RUNTIME_DIR / runtime_lock.JOB_RECORD_FILENAME
+
+
+def external_job_message(record: dict[str, Any]) -> str:
+    return (
+        "Hay una operación de GPU/vLLM en curso fuera de este panel "
+        f"(acción {record.get('action') or 'desconocida'}, PGID {record['pgid']}). "
+        "Espera a que termine o detenla antes de iniciar otra."
+    )
 
 
 def trainer_python() -> Path:
@@ -136,11 +182,90 @@ def number_arg(payload: dict[str, Any], key: str, default: float, minimum: float
 def int_arg(payload: dict[str, Any], key: str, default: int, minimum: int, maximum: int) -> int:
     try:
         value = int(payload.get(key, default))
-    except (TypeError, ValueError) as error:
+    except (TypeError, ValueError, OverflowError) as error:
         raise ValueError(f"{key} debe ser entero.") from error
     if not minimum <= value <= maximum:
         raise ValueError(f"{key} debe estar entre {minimum} y {maximum}.")
     return value
+
+
+@dataclass(frozen=True)
+class TrainingRequest:
+    """Payload de entrenamiento ya validado; compartido por ambas GUIs."""
+
+    dataset: Path
+    examples: int
+    name: str
+    model: str
+    hf_token: str
+    rank: int
+    alpha: int
+    epochs: float
+    dropout: float
+    learning_rate: float
+    batch_size: int
+    gradient_accumulation: int
+    max_length: int
+    seed: int
+
+    def script_arguments(self) -> list[str]:
+        """Argumentos comunes de scripts/train-adapter.sh y train-adapter-axolotl.sh."""
+        return [
+            str(self.dataset),
+            self.name,
+            "--model",
+            self.model,
+            "--rank",
+            str(self.rank),
+            "--alpha",
+            str(self.alpha),
+            "--dropout",
+            str(self.dropout),
+            "--epochs",
+            str(self.epochs),
+            "--learning-rate",
+            str(self.learning_rate),
+            "--batch-size",
+            str(self.batch_size),
+            "--gradient-accumulation",
+            str(self.gradient_accumulation),
+            "--max-length",
+            str(self.max_length),
+            "--seed",
+            str(self.seed),
+        ]
+
+
+def validate_training_payload(payload: dict[str, Any]) -> TrainingRequest:
+    """Valida el payload completo antes de cualquier efecto (FT-11).
+
+    Ninguna operación con efectos, como ensure_adapter_dir_writable (que puede
+    lanzar un contenedor root), debe ejecutarse antes de esta función.
+    """
+    dataset = dataset_path(payload.get("dataset"))
+    _, summary = load_jsonl(dataset)
+    name = validate_adapter_name(payload.get("name"))
+    model = validate_model(payload.get("model"))
+    hf_token = validate_hf_token(payload.pop("hfToken", ""))
+    rank = int_arg(payload, "rank", 16, 8, 32)
+    if rank not in {8, 16, 32}:
+        raise ValueError("rank debe ser 8, 16 o 32.")
+    return TrainingRequest(
+        dataset=dataset,
+        examples=int(summary["examples"]),
+        name=name,
+        model=model,
+        hf_token=hf_token,
+        rank=rank,
+        alpha=int_arg(payload, "alpha", 32, 1, 256),
+        epochs=number_arg(payload, "epochs", 2.0, 0.1, 20.0),
+        dropout=number_arg(payload, "dropout", 0.05, 0.0, 0.5),
+        learning_rate=number_arg(payload, "learningRate", 1e-4, 1e-7, 0.1),
+        batch_size=int_arg(payload, "batchSize", 1, 1, 32),
+        gradient_accumulation=int_arg(payload, "gradientAccumulation", 8, 1, 256),
+        max_length=int_arg(payload, "maxLength", 1024, 128, 16384),
+        seed=int_arg(payload, "seed", 42, 0, 2_147_483_647),
+    )
 
 
 def dataset_path(dataset_id: Any) -> Path:
@@ -159,12 +284,38 @@ def dataset_path(dataset_id: Any) -> Path:
     return candidate
 
 
+def json_too_deep(text: str) -> bool:
+    """Return True when arrays/objects nest deeper than MAX_JSON_DEPTH.
+
+    Brackets inside JSON strings do not count. Malformed JSON is left for
+    json.loads to report with its usual error.
+    """
+    depth = 0
+    for match in JSON_DEPTH_TOKEN.finditer(text):
+        token = match.group()
+        if token == "[" or token == "{":
+            depth += 1
+            if depth > MAX_JSON_DEPTH:
+                return True
+        elif token == "]" or token == "}":
+            depth -= 1
+    return False
+
+
 def dataset_summary(path: Path) -> dict[str, Any]:
     try:
+        with path.open(encoding="utf-8", errors="replace") as lines:
+            if any(json_too_deep(line) for line in lines):
+                raise RecursionError
         _, summary = load_jsonl(path)
         return dict(summary)
     except (OSError, ValueError, json.JSONDecodeError) as error:
         return {"valid": False, "error": str(error)}
+    except RecursionError:
+        return {"valid": False, "error": "No se pudo analizar el dataset: el JSON está demasiado anidado."}
+    except Exception as error:
+        # Cualquier otro fallo del análisis también es un dataset inválido (FT-10).
+        return {"valid": False, "error": f"No se pudo analizar el dataset ({type(error).__name__}): {error}"}
 
 
 def list_datasets() -> list[dict[str, Any]]:
@@ -318,13 +469,79 @@ def job_snapshot(job: Job | None) -> dict[str, Any] | None:
     }
 
 
+def environment_check_path(check_script: Path | None = None) -> Path:
+    """Resultado persistido de la última comprobación, uno por backend."""
+    return RUNTIME_DIR / f"environment-check.{(check_script or ENVIRONMENT_CHECK).stem}.json"
+
+
+def _venv_config_mtime(python: Path) -> int | None:
+    try:
+        return (python.parent.parent / "pyvenv.cfg").stat().st_mtime_ns
+    except OSError:
+        return None
+
+
+def clear_environment_check(check_script: Path | None = None) -> None:
+    try:
+        environment_check_path(check_script).unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def _record_environment_check(job: Job, check_script: Path | None, python: Path, ok: bool) -> None:
+    try:
+        runtime_lock.write_private_json(environment_check_path(check_script), {
+            "ok": ok,
+            "checkedAt": time.time(),
+            "python": str(python),
+            "venvConfigMtimeNs": _venv_config_mtime(python),
+        })
+    except OSError as error:
+        append_log(job, f"Aviso: no se pudo guardar el resultado de la comprobación: {error}")
+
+
+def verify_environment(job: Job, label: str, *, check: Any = None, check_script: Path | None = None) -> None:
+    """Ejecuta la comprobación real (CUDA, NF4) y persiste su resultado (FT-07).
+
+    Una cancelación no deja resultado: no prueba ni descarta el entorno.
+    """
+    python = trainer_python()
+    try:
+        (check or check_training_environment)(job, label)
+    except JobCancelled:
+        raise
+    except Exception:
+        _record_environment_check(job, check_script, python, ok=False)
+        raise
+    _record_environment_check(job, check_script, python, ok=True)
+
+
+def environment_status(venv_present: bool, *, check_script: Path | None = None) -> dict[str, Any]:
+    """Separa "existe el venv" de "la última comprobación real fue correcta"."""
+    record = runtime_lock.read_json_record(environment_check_path(check_script)) if venv_present else None
+    python = trainer_python()
+    verified = bool(
+        record
+        and record.get("ok") is True
+        and record.get("python") == str(python)
+        and record.get("venvConfigMtimeNs") == _venv_config_mtime(python)
+    )
+    return {
+        # Se conserva por compatibilidad: significa solo que el venv existe.
+        "environmentReady": venv_present,
+        "venvPresent": venv_present,
+        "environmentVerified": verified,
+        "environmentCheckedAt": record.get("checkedAt") if verified and record else None,
+    }
+
+
 def status_payload() -> dict[str, Any]:
     running, models = fetch_vllm_models()
     with STATE_LOCK:
         job = job_snapshot(CURRENT_JOB)
     return {
         "localOnly": True,
-        "environmentReady": trainer_python().is_file(),
+        **environment_status(trainer_python().is_file()),
         "dockerCli": shutil.which("docker") is not None,
         "bashCli": shutil.which("bash") is not None,
         "vllmRunning": running,
@@ -332,7 +549,19 @@ def status_payload() -> dict[str, Any]:
         "datasets": list_datasets(),
         "adapters": list_adapters(),
         "job": job,
+        "externalJob": external_job_snapshot(),
+        "allowlistedAdapters": allowlisted_adapters(),
     }
+
+
+def external_job_snapshot() -> dict[str, Any] | None:
+    """Job vivo registrado por otro proceso, sin modificar el registro."""
+    record = runtime_lock.live_job_record(job_record_path(), remove_stale=False)
+    with STATE_LOCK:
+        own_process = CURRENT_JOB.process if CURRENT_JOB is not None else None
+    if record is None or (own_process is not None and record.get("pgid") == own_process.pid):
+        return None
+    return {"action": record.get("action"), "pgid": record["pgid"], "startedAt": record.get("startedAt")}
 
 
 def append_log(job: Job, line: str) -> None:
@@ -340,6 +569,43 @@ def append_log(job: Job, line: str) -> None:
     if clean:
         with STATE_LOCK:
             job.logs.append(clean)
+
+
+def _pump_output(job: Job, stream: Any) -> None:
+    for line in stream:
+        append_log(job, line)
+
+
+def _wait_for_output(job: Job, reader: threading.Thread) -> None:
+    """Espera el EOF del stdout; tras una cancelación, solo un margen acotado."""
+    while True:
+        reader.join(0.2)
+        if not reader.is_alive():
+            return
+        with STATE_LOCK:
+            cancelled = job.cancel_requested
+        if cancelled:
+            reader.join(CANCEL_OUTPUT_DRAIN_SECONDS)
+            if reader.is_alive():
+                append_log(
+                    job,
+                    "Un subproceso desacoplado mantiene abierta la salida; "
+                    "la operación se da por cancelada sin esperar su cierre.",
+                )
+            return
+
+
+def _wait_for_process_group(job: Job, pgid: int) -> None:
+    """El job no termina mientras quede vivo algún proceso de su grupo.
+
+    Tras una cancelación la escalada acaba en SIGKILL; sin cancelación se espera a
+    los procesos que el comando dejó en su grupo y el job sigue siendo cancelable.
+    """
+    if not runtime_lock.process_group_alive(pgid):
+        return
+    append_log(job, f"Esperando a que terminen los procesos restantes del grupo {pgid}…")
+    while runtime_lock.process_group_alive(pgid):
+        time.sleep(0.1)
 
 
 def run_command(
@@ -353,6 +619,13 @@ def run_command(
         raise JobCancelled()
     if label:
         append_log(job, f"\n== {label} ==")
+    child_env = dict(os.environ if env is None else env)
+    pass_fds: tuple[int, ...] = ()
+    if job.gpu_lock is not None and job.gpu_lock.fd is not None:
+        # El hijo hereda el lock de GPU/vLLM: los scripts de entrenamiento lo
+        # reconocen y un proceso que sobreviva al panel lo sigue reteniendo.
+        child_env[runtime_lock.LOCK_FD_ENV] = str(job.gpu_lock.fd)
+        pass_fds = (job.gpu_lock.fd,)
     process = subprocess.Popen(
         command,
         cwd=ROOT,
@@ -360,15 +633,39 @@ def run_command(
         stderr=subprocess.STDOUT,
         text=True,
         bufsize=1,
-        env=env,
+        env=child_env,
         start_new_session=True,
+        pass_fds=pass_fds,
     )
+    if job.gpu_lock is not None:
+        try:
+            runtime_lock.write_private_json(job_record_path(), {
+                "pgid": process.pid,
+                "pid": process.pid,
+                "action": job.action,
+                "jobId": job.id,
+                "guiPid": os.getpid(),
+                "bootId": runtime_lock.boot_id(),
+                "startedAt": time.time(),
+            })
+        except OSError as error:
+            append_log(job, f"Aviso: no se pudo registrar el PGID del job en {RUNTIME_DIR}: {error}")
     with STATE_LOCK:
         job.process = process
+        cancel_pending = job.cancel_requested
+    if cancel_pending:
+        start_cancel_escalation(job, process)
     assert process.stdout is not None
-    for line in process.stdout:
-        append_log(job, line)
-    returncode = process.wait()
+    reader = threading.Thread(target=_pump_output, args=(job, process.stdout), daemon=True)
+    reader.start()
+    try:
+        returncode = process.wait()
+        _wait_for_output(job, reader)
+        _wait_for_process_group(job, process.pid)
+    finally:
+        # Con procesos vivos el registro se conserva: el próximo arranque los detecta.
+        if job.gpu_lock is not None and not runtime_lock.process_group_alive(process.pid):
+            runtime_lock.remove_job_record(job_record_path(), process.pid)
     with STATE_LOCK:
         job.process = None
         job.returncode = returncode
@@ -420,8 +717,8 @@ def post_vllm(path: str, payload: dict[str, str]) -> str:
         raise RuntimeError("vLLM no está disponible en 127.0.0.1:8000.") from error
 
 
-def validate_adapter_base(name: str) -> str:
-    """Check training metadata against the served root, never a LoRA's parent."""
+def adapter_training_base(name: str) -> str:
+    """Base declarada por los metadatos del adaptador; ValueError si son inválidos."""
     config, manifest = read_config(ADAPTER_DIR / name)
     if not isinstance(config, dict) or not isinstance(manifest, dict):
         raise ValueError("Los metadatos del adaptador deben ser objetos JSON.")
@@ -431,6 +728,12 @@ def validate_adapter_base(name: str) -> str:
     base = base.strip()
     if "baseModel" in manifest and manifest["baseModel"] != base:
         raise ValueError("baseModel del manifest no coincide con adapter_config.json.")
+    return base
+
+
+def validate_adapter_base(name: str) -> str:
+    """Check training metadata against the served root, never a LoRA's parent."""
+    base = adapter_training_base(name)
 
     with urlopen("http://127.0.0.1:8000/v1/models", timeout=5) as response:
         payload = json.load(response)
@@ -443,7 +746,9 @@ def validate_adapter_base(name: str) -> str:
     roots = {item["root"].strip() for item in bases}
     if roots != {base}:
         served = ", ".join(sorted(roots)) or "base desconocida"
-        raise RuntimeError(f"El adaptador '{name}' fue entrenado sobre '{base}', pero vLLM sirve '{served}'. No se cargará un LoRA incompatible.")
+        message = f"El adaptador '{name}' fue entrenado sobre '{base}', pero vLLM sirve '{served}'. No se cargará un LoRA incompatible."
+        # Sin una base identificable no hay prueba de incompatibilidad: no es un mismatch.
+        raise AdapterBaseMismatch(message) if roots else RuntimeError(message)
     return bases[0]["id"]
 
 
@@ -545,17 +850,60 @@ def rollback_adapter_runtime(name: str, allowed: bool, runtime_path: str | None 
         )
 
 
+def _env_file_target(env_file: Path) -> Path:
+    """Un .env.local enlazado se conserva: se reescribe el archivo apuntado."""
+    if env_file.is_symlink() and env_file.exists():
+        return env_file.resolve()
+    return env_file
+
+
+def _replace_env_file(target: Path, content: str) -> None:
+    """Reemplazo atómico sin ampliar permisos (FT-04).
+
+    mkstemp crea el temporal con O_EXCL y modo 0600; si el archivo ya existía
+    se copia su modo, de modo que uno privado sigue privado y uno nuevo nace 0600.
+    """
+    descriptor, temporary = tempfile.mkstemp(dir=target.parent, prefix=f".{target.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            handle.write(content)
+        if target.exists():
+            shutil.copymode(target, temporary)
+        os.replace(temporary, target)
+    except BaseException:
+        Path(temporary).unlink(missing_ok=True)
+        raise
+
+
+def _allowlist_entry(lines: list[str]) -> tuple[int | None, list[str]]:
+    """Índice de la línea LLM_ADAPTER_MODELS= y los nombres que declara."""
+    entry_index = next(
+        (index for index, line in enumerate(lines) if line.startswith("LLM_ADAPTER_MODELS=")),
+        None,
+    )
+    if entry_index is None:
+        return None, []
+    names = [item.strip() for item in lines[entry_index].split("=", 1)[1].split(",") if item.strip()]
+    return entry_index, names
+
+
+def allowlisted_adapters() -> list[str]:
+    """Adaptadores que el gateway ofrecerá según LLM_ADAPTER_MODELS en .env.local."""
+    env_file = ROOT / ".env.local"
+    try:
+        text = env_file.read_text(encoding="utf-8") if env_file.exists() else ""
+    except OSError:
+        return []
+    return _allowlist_entry(text.splitlines())[1]
+
+
 def set_adapter_allowed_in_env(name: str, allowed: bool, *, rollback_runtime: bool = False,
                                runtime_path: str | None = None) -> bool:
     env_file = ROOT / ".env.local"
-    temporary = env_file.with_suffix(env_file.suffix + ".tmp")
     try:
         text = env_file.read_text(encoding="utf-8") if env_file.exists() else ""
         lines = text.splitlines()
-        entry_index = next(
-            (index for index, line in enumerate(lines) if line.startswith("LLM_ADAPTER_MODELS=")),
-            None,
-        )
+        entry_index, current = _allowlist_entry(lines)
         if entry_index is None:
             if not allowed:
                 return False
@@ -564,11 +912,6 @@ def set_adapter_allowed_in_env(name: str, allowed: bool, *, rollback_runtime: bo
             lines.extend(["# Adaptadores LoRA permitidos por el gateway.", f"LLM_ADAPTER_MODELS={name}"])
             changed = True
         else:
-            current = [
-                item.strip()
-                for item in lines[entry_index].split("=", 1)[1].split(",")
-                if item.strip()
-            ]
             updated = list(current)
             if allowed and name not in current:
                 updated.append(name)
@@ -581,14 +924,9 @@ def set_adapter_allowed_in_env(name: str, allowed: bool, *, rollback_runtime: bo
         if not changed:
             return False
 
-        temporary.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
-        os.replace(temporary, env_file)
+        _replace_env_file(_env_file_target(env_file), "\n".join(lines).rstrip() + "\n")
         return True
     except OSError as error:
-        try:
-            temporary.unlink(missing_ok=True)
-        except OSError:
-            pass
         if not rollback_runtime:
             raise RuntimeError(f"No fue posible actualizar {env_file.name}: {error}") from error
         try:
@@ -605,6 +943,153 @@ def set_adapter_allowed_in_env(name: str, allowed: bool, *, rollback_runtime: bo
             f"vLLM había dejado el adaptador '{name}' {desired}, pero no fue posible actualizar {env_file.name}. "
             f"El cambio de vLLM fue revertido y el adaptador quedó {restored}; no se aplicó la operación."
         ) from error
+
+
+def load_adapter_runtime(job: Job, name: str) -> str:
+    """Valida la base, prepara la exportación y carga el LoRA en vLLM."""
+    directory = ADAPTER_DIR / name
+    if not (directory / "adapter_config.json").is_file() or not (directory / "adapter_model.safetensors").is_file():
+        raise RuntimeError("El adaptador no contiene los archivos PEFT esperados.")
+    validate_adapter_base(name)
+    runtime_path = prepare_runtime_adapter(job, name)
+    append_log(job, f"Cargando {name} en vLLM...")
+    response = post_vllm(
+        "/v1/load_lora_adapter",
+        {"lora_name": name, "lora_path": runtime_path},
+    )
+    append_log(job, response or "Adaptador cargado.")
+    return runtime_path
+
+
+def reconcile_marker_path() -> Path:
+    return RUNTIME_DIR / RECONCILE_MARKER_FILENAME
+
+
+def _clear_reconcile_marker() -> None:
+    try:
+        reconcile_marker_path().unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def _check_allowlist_entry(name: str) -> str:
+    """Errores propios de la entrada; solo estos permiten retirarla de la allowlist."""
+    try:
+        name = validate_adapter_name(name)
+    except ValueError as error:
+        raise InvalidAllowlistEntry(str(error)) from error
+    directory = ADAPTER_DIR / name
+    if directory.is_symlink() or not directory.is_dir():
+        raise InvalidAllowlistEntry("el adaptador ya no existe en adapters/")
+    if not (directory / "adapter_config.json").is_file() or not (directory / "adapter_model.safetensors").is_file():
+        raise InvalidAllowlistEntry("El adaptador no contiene los archivos PEFT esperados.")
+    try:
+        adapter_training_base(name)
+    except ValueError as error:
+        raise InvalidAllowlistEntry(str(error)) from error
+    # Aquí un ValueError vendría de la respuesta de vLLM: es infraestructura y se propaga.
+    try:
+        validate_adapter_base(name)
+    except AdapterBaseMismatch as error:
+        raise InvalidAllowlistEntry(str(error)) from error
+    return name
+
+
+def reconcile_adapter_allowlist(job: Job) -> dict[str, list[str]]:
+    """Alinea LLM_ADAPTER_MODELS con vLLM después de (re)iniciarlo (FT-03).
+
+    Reiniciar vLLM descarta los LoRA cargados dinámicamente. Cada adaptador de la
+    allowlist que ya no está servido se recarga con la misma validación de base
+    que "Cargar en vLLM". Solo se retira una entrada inválida en sí misma (el
+    adaptador ya no existe, sus metadatos son inválidos o vLLM sirve otra base).
+    Un fallo de infraestructura (intérprete o exportación, error de vLLM) nunca
+    retira un adaptador válido: se conserva y la reconciliación termina en error.
+    """
+    summary: dict[str, list[str]] = {"kept": [], "reloaded": [], "removed": []}
+    allowlisted = allowlisted_adapters()
+    if not allowlisted:
+        append_log(job, "LLM_ADAPTER_MODELS está vacía; no hay adaptadores que reconciliar.")
+        _clear_reconcile_marker()
+        return summary
+    running, served = fetch_vllm_models()
+    if not running:
+        raise RuntimeError("vLLM no está disponible; no se puede reconciliar LLM_ADAPTER_MODELS.")
+    append_log(job, f"Reconciliando LLM_ADAPTER_MODELS con vLLM: {', '.join(allowlisted)}")
+    failed: list[str] = []
+    for name in allowlisted:
+        if name in served:
+            summary["kept"].append(name)
+            append_log(job, f"{name}: sigue cargado en vLLM.")
+            continue
+        try:
+            load_adapter_runtime(job, _check_allowlist_entry(name))
+        except JobCancelled:
+            raise
+        except InvalidAllowlistEntry as error:
+            summary["removed"].append(name)
+            append_log(job, f"{name}: se retira de LLM_ADAPTER_MODELS ({error}).")
+            continue
+        except Exception as error:
+            failed.append(f"{name} ({error})")
+            append_log(job, f"{name}: se conserva en LLM_ADAPTER_MODELS; no se pudo recargar ({error}).")
+            continue
+        summary["reloaded"].append(name)
+        append_log(job, f"{name}: recargado en vLLM tras el reinicio.")
+    for name in summary["removed"]:
+        set_adapter_allowed_in_env(name, False)
+    if summary["removed"]:
+        append_log(job, "Si la web ya estaba activa, reiníciala para que relea .env.local.")
+    if failed:
+        raise RuntimeError(
+            "No se pudo recargar en vLLM: " + "; ".join(failed)
+            + "; se conservan en LLM_ADAPTER_MODELS hasta poder verificarlos. Vuelve a intentarlo cuando se resuelva."
+        )
+    _clear_reconcile_marker()
+    return summary
+
+
+def _run_reconcile_job(job: Job) -> None:
+    global _LAST_AUTO_RECONCILE_FAILURE
+    try:
+        job.result = reconcile_adapter_allowlist(job)
+    except JobCancelled:
+        raise
+    except Exception:
+        _LAST_AUTO_RECONCILE_FAILURE = time.monotonic()
+        raise
+    _LAST_AUTO_RECONCILE_FAILURE = None
+
+
+def maybe_start_pending_reconcile() -> Job | None:
+    """Completa una reconciliación pendiente en cuanto vLLM vuelve a responder.
+
+    La marca la dejan scripts/train-adapter*.sh al detener vLLM y la borra la
+    reconciliación completa; persiste si una cancelación la interrumpió.
+    """
+    if not reconcile_marker_path().exists():
+        return None
+    if (_LAST_AUTO_RECONCILE_FAILURE is not None
+            and time.monotonic() - _LAST_AUTO_RECONCILE_FAILURE < RECONCILE_RETRY_SECONDS):
+        return None
+    with STATE_LOCK:
+        if CURRENT_JOB is not None and CURRENT_JOB.status == "running":
+            return None
+    running, _ = fetch_vllm_models()
+    if not running:
+        return None
+    try:
+        return start_job("reconcile-adapters", {})
+    except RuntimeError:
+        # Otra operación (otra GUI o CLI) tiene la GPU: se reintenta más tarde.
+        return None
+
+
+def watch_pending_reconcile(stop: threading.Event) -> None:
+    while not stop.wait(RECONCILE_POLL_SECONDS):
+        try:
+            maybe_start_pending_reconcile()
+        except Exception as error:
+            print(f"Aviso: no se pudo iniciar la reconciliación pendiente: {error}", flush=True)
 
 
 def setup_environment(job: Job, *, automatic: bool = False) -> None:
@@ -630,79 +1115,45 @@ def setup_environment(job: Job, *, automatic: bool = False) -> None:
 def run_action(job: Job, payload: dict[str, Any]) -> None:
     action = job.action
     if action == "setup":
+        # El entorno va a cambiar: la comprobación anterior deja de valer.
+        clear_environment_check()
         setup_environment(job)
-        check_training_environment(job, "Comprobando CUDA y bitsandbytes")
+        verify_environment(job, "Comprobando CUDA y bitsandbytes")
         job.result = {"environmentReady": True}
         return
     if action == "check":
         if not trainer_python().is_file():
             raise RuntimeError("Primero prepara el entorno de fine-tuning.")
-        check_training_environment(job, "Comprobando CUDA y bitsandbytes")
+        verify_environment(job, "Comprobando CUDA y bitsandbytes")
         job.result = {"check": "ok"}
         return
     if action == "train":
-        dataset = dataset_path(payload.get("dataset"))
-        _, summary = load_jsonl(dataset)
+        request = validate_training_payload(payload)
         ensure_adapter_dir_writable(job)
-        name = validate_adapter_name(payload.get("name"))
-        model = validate_model(payload.get("model"))
-        hf_token = validate_hf_token(payload.pop("hfToken", ""))
-        rank = int_arg(payload, "rank", 16, 8, 32)
-        if rank not in {8, 16, 32}:
-            raise ValueError("rank debe ser 8, 16 o 32.")
-        alpha = int_arg(payload, "alpha", 32, 1, 256)
-        epochs = number_arg(payload, "epochs", 2.0, 0.1, 20.0)
-        dropout = number_arg(payload, "dropout", 0.05, 0.0, 0.5)
-        learning_rate = number_arg(payload, "learningRate", 1e-4, 1e-7, 0.1)
-        batch_size = int_arg(payload, "batchSize", 1, 1, 32)
-        gradient_accumulation = int_arg(payload, "gradientAccumulation", 8, 1, 256)
-        max_length = int_arg(payload, "maxLength", 1024, 128, 16384)
-        seed = int_arg(payload, "seed", 42, 0, 2_147_483_647)
         if not trainer_python().is_file():
             setup_environment(job, automatic=True)
-        check_training_environment(job, "Verificando entorno")
-        command = [
-            "bash",
-            str(ROOT / "scripts" / "train-adapter.sh"),
-            str(dataset),
-            name,
-            "--model",
-            model,
-            "--rank",
-            str(rank),
-            "--alpha",
-            str(alpha),
-            "--dropout",
-            str(dropout),
-            "--epochs",
-            str(epochs),
-            "--learning-rate",
-            str(learning_rate),
-            "--batch-size",
-            str(batch_size),
-            "--gradient-accumulation",
-            str(gradient_accumulation),
-            "--max-length",
-            str(max_length),
-            "--seed",
-            str(seed),
-        ]
-        training_env = environment_with_hf_token(hf_token)
-        if hf_token:
+        verify_environment(job, "Verificando entorno")
+        command = ["bash", str(ROOT / "scripts" / "train-adapter.sh"), *request.script_arguments()]
+        training_env = environment_with_hf_token(request.hf_token)
+        if request.hf_token:
             append_log(job, "Hugging Face: autenticación efímera habilitada para las descargas del entrenamiento.")
-        run_command(job, command, env=training_env, label=f"Entrenando {name}")
-        job.result = {"adapter": name, "dataset": dataset.name, "examples": summary["examples"]}
+        run_command(job, command, env=training_env, label=f"Entrenando {request.name}")
+        job.result = {"adapter": request.name, "dataset": request.dataset.name, "examples": request.examples}
         return
     if action == "start-vllm":
         model = validate_model(payload.get("model"))
-        ensure_adapter_dir_writable(job)
         hf_token = validate_hf_token(payload.pop("hfToken", ""))
+        ensure_adapter_dir_writable(job)
         fish = shutil.which("fish")
         if not fish:
             raise RuntimeError("No se encontró fish; la GUI necesita ./comandos.fish para iniciar vLLM y embeddings.")
         env = environment_with_hf_token(hf_token)
         env["VLLM_MODEL"] = model
         env["LLM_BRIDGE_NONINTERACTIVE"] = "1"
+        python = trainer_python()
+        if python.is_file():
+            # La reconciliación posterior exporta con el intérprete de este backend.
+            env["FINE_TUNE_PYTHON"] = str(python)
         run_command(
             job,
             [fish, str(ROOT / "comandos.fish"), "vllm", model],
@@ -734,6 +1185,9 @@ def run_action(job: Job, payload: dict[str, Any]) -> None:
         append_log(job, "Efecto del LoRA detectado. Esto no mide la calidad de las respuestas.")
         job.result = {"adapter": name, "inferenceVerified": True}
         return
+    if action == "reconcile-adapters":
+        _run_reconcile_job(job)
+        return
     if action == "delete-adapter":
         name = validate_adapter_name(payload.get("name"))
         delete_adapter(job, name)
@@ -741,18 +1195,8 @@ def run_action(job: Job, payload: dict[str, Any]) -> None:
         return
     if action in {"load-adapter", "unload-adapter"}:
         name = validate_adapter_name(payload.get("name"))
-        directory = ADAPTER_DIR / name
         if action == "load-adapter":
-            if not (directory / "adapter_config.json").is_file() or not (directory / "adapter_model.safetensors").is_file():
-                raise RuntimeError("El adaptador no contiene los archivos PEFT esperados.")
-            validate_adapter_base(name)
-            runtime_path = prepare_runtime_adapter(job, name)
-            append_log(job, f"Cargando {name} en vLLM...")
-            response = post_vllm(
-                "/v1/load_lora_adapter",
-                {"lora_name": name, "lora_path": runtime_path},
-            )
-            append_log(job, response or "Adaptador cargado.")
+            runtime_path = load_adapter_runtime(job, name)
             set_adapter_allowed_in_env(name, True, rollback_runtime=True)
             append_log(
                 job,
@@ -763,6 +1207,21 @@ def run_action(job: Job, payload: dict[str, Any]) -> None:
                 "runtimeLoaded": True,
                 "runtimePath": runtime_path,
                 "inferenceVerified": False,
+                "allowlistUpdated": True,
+                "gatewayRestartRequired": True,
+            }
+        elif name in allowlisted_adapters() and not adapter_is_loaded(name):
+            # Tras un reinicio de vLLM el adaptador puede seguir en la allowlist
+            # sin estar servido: se permite retirarlo sin tocar vLLM (FT-03).
+            append_log(job, f"{name} no está cargado en vLLM; solo se retira de LLM_ADAPTER_MODELS.")
+            set_adapter_allowed_in_env(name, False)
+            append_log(
+                job,
+                "Adaptador retirado de LLM_ADAPTER_MODELS. Si la web ya estaba activa, reiníciala para que relea el entorno.",
+            )
+            job.result = {
+                "adapter": name,
+                "runtimeLoaded": False,
                 "allowlistUpdated": True,
                 "gatewayRestartRequired": True,
             }
@@ -803,20 +1262,64 @@ def job_worker(job: Job, payload: dict[str, Any]) -> None:
         with STATE_LOCK:
             job.finished_at = time.time()
             job.process = None
+            gpu_lock = job.gpu_lock
+        if gpu_lock is not None:
+            gpu_lock.release()
 
 
 def start_job(action: str, payload: dict[str, Any]) -> Job:
-    allowed = {"setup", "check", "train", "start-vllm", "stop-vllm", "load-adapter", "unload-adapter", "verify-adapter", "delete-adapter"}
+    allowed = {"setup", "check", "train", "start-vllm", "stop-vllm", "load-adapter", "unload-adapter", "verify-adapter", "delete-adapter", "reconcile-adapters"}
     if action not in allowed:
         raise ValueError("Acción no permitida.")
     global CURRENT_JOB
     with STATE_LOCK:
         if CURRENT_JOB is not None and CURRENT_JOB.status == "running":
             raise RuntimeError("Ya hay una operación en curso.")
-        job = Job(id=uuid.uuid4().hex, action=action)
+        external = runtime_lock.live_job_record(job_record_path())
+        if external is not None:
+            raise RuntimeError(external_job_message(external))
+        # GpuLockBusy es un RuntimeError: el handler lo responde como 409.
+        gpu_lock = runtime_lock.GpuLock.acquire(gpu_lock_path())
+        job = Job(id=uuid.uuid4().hex, action=action, gpu_lock=gpu_lock)
         CURRENT_JOB = job
     threading.Thread(target=job_worker, args=(job, payload), daemon=True).start()
     return job
+
+
+def escalate_cancellation(job: Job, process: subprocess.Popen[str]) -> None:
+    """SIGINT, SIGTERM y SIGKILL al grupo del job hasta que no quede ningún proceso."""
+    pgid = process.pid  # start_new_session=True: el hijo lidera su propio grupo.
+    steps = (
+        (signal.SIGINT, CANCEL_SIGINT_GRACE_SECONDS),
+        (signal.SIGTERM, CANCEL_SIGTERM_GRACE_SECONDS),
+        (signal.SIGKILL, 0.0),
+    )
+    for index, (signum, grace) in enumerate(steps):
+        if not runtime_lock.process_group_alive(pgid):
+            return
+        if index == 0:
+            append_log(job, f"Cancelación solicitada: enviando SIGINT al grupo de procesos {pgid}.")
+        else:
+            append_log(
+                job,
+                f"El grupo {pgid} sigue activo tras {steps[index - 1][1]:g} s; enviando {signum.name}.",
+            )
+        try:
+            os.killpg(pgid, signum)
+        except ProcessLookupError:
+            return
+        except PermissionError as error:
+            append_log(job, f"No se pudo enviar {signum.name} al grupo {pgid}: {error}")
+            return
+        deadline = time.monotonic() + grace
+        while time.monotonic() < deadline:
+            if not runtime_lock.process_group_alive(pgid):
+                return
+            time.sleep(0.05)
+
+
+def start_cancel_escalation(job: Job, process: subprocess.Popen[str]) -> None:
+    threading.Thread(target=escalate_cancellation, args=(job, process), daemon=True).start()
 
 
 def cancel_job() -> bool:
@@ -824,14 +1327,62 @@ def cancel_job() -> bool:
         job = CURRENT_JOB
         if job is None or job.status != "running":
             return False
+        already_requested = job.cancel_requested
         job.cancel_requested = True
         process = job.process
-    if process is not None and process.poll() is None:
-        try:
-            os.killpg(os.getpgid(process.pid), signal.SIGINT)
-        except ProcessLookupError:
-            pass
+    if process is not None and not already_requested:
+        start_cancel_escalation(job, process)
     return True
+
+
+def stop_running_job() -> None:
+    """Cancela y espera el job activo antes de que el panel termine."""
+    with STATE_LOCK:
+        job = CURRENT_JOB
+        running = job is not None and job.status == "running"
+    if not running or job is None:
+        return
+    print("Cancelando la operación en curso antes de cerrar el panel…", flush=True)
+    cancel_job()
+    limit = CANCEL_SIGINT_GRACE_SECONDS + CANCEL_SIGTERM_GRACE_SECONDS + CANCEL_OUTPUT_DRAIN_SECONDS + 5.0
+    if _wait_job_finished(job, limit):
+        return
+    # La escalada corre en un hilo daemon que muere con el panel: antes de salir
+    # se envía SIGKILL directamente al grupo para no dejar procesos huérfanos.
+    with STATE_LOCK:
+        process = job.process
+    if process is not None:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
+        if _wait_job_finished(job, 5.0):
+            return
+    print("Aviso: la operación no terminó a tiempo; revisa los procesos manualmente.", flush=True)
+
+
+def _wait_job_finished(job: Job, seconds: float) -> bool:
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        with STATE_LOCK:
+            if job.status != "running":
+                return True
+        time.sleep(0.1)
+    return False
+
+
+def report_external_job() -> None:
+    """Comprueba al arrancar si quedó vivo el job de una sesión anterior."""
+    record = runtime_lock.live_job_record(job_record_path())
+    if record is not None:
+        print(
+            f"Aviso: {external_job_message(record)} Para detenerla: kill -INT -- -{record['pgid']}",
+            flush=True,
+        )
+
+
+def _exit_on_signal(signum: int, _frame: Any) -> None:
+    raise SystemExit(128 + signum)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -869,9 +1420,12 @@ class Handler(BaseHTTPRequestHandler):
             raise ValueError("Content-Length inválido.") from error
         if length <= 0 or length > MAX_BODY_BYTES:
             raise ValueError("Solicitud vacía o demasiado grande.")
+        raw = self.rfile.read(length)
         try:
-            payload = json.loads(self.rfile.read(length))
-        except json.JSONDecodeError as error:
+            if json_too_deep(raw.decode("utf-8", errors="replace")):
+                raise RecursionError
+            payload = json.loads(raw)
+        except (json.JSONDecodeError, RecursionError) as error:
             raise ValueError("JSON inválido.") from error
         if not isinstance(payload, dict):
             raise ValueError("Se esperaba un objeto JSON.")
@@ -946,13 +1500,20 @@ class Handler(BaseHTTPRequestHandler):
                 DATASET_DIR.mkdir(parents=True, exist_ok=True)
                 destination = DATASET_DIR / filename
                 temporary = DATASET_DIR / f".{filename}.{uuid.uuid4().hex}.tmp"
-                temporary.write_bytes(encoded)
-                summary = dataset_summary(temporary)
+                try:
+                    temporary.write_bytes(encoded)
+                    summary = dataset_summary(temporary)
+                    if summary.get("valid"):
+                        os.replace(temporary, destination)
+                finally:
+                    # El temporal nunca sobrevive a la subida, falle o no (FT-10).
+                    try:
+                        temporary.unlink(missing_ok=True)
+                    except OSError:
+                        pass
                 if not summary.get("valid"):
-                    temporary.unlink(missing_ok=True)
                     self._json({"error": summary.get("error", "Dataset inválido.")}, 422)
                     return
-                os.replace(temporary, destination)
                 self._json(
                     {
                         "dataset": {
@@ -974,6 +1535,12 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"cancelled": cancelled}, 200 if cancelled else 409)
                 return
             if path == "/api/shutdown":
+                with STATE_LOCK:
+                    running = CURRENT_JOB is not None and CURRENT_JOB.status == "running"
+                if running:
+                    raise RuntimeError(
+                        "Hay una operación en curso. Cancélala o espera a que termine antes de cerrar el panel."
+                    )
                 self._json({"shuttingDown": True})
                 threading.Thread(target=self.server.shutdown, daemon=True).start()
                 return
@@ -984,6 +1551,16 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"error": str(error)}, 409)
         except OSError as error:
             self._json({"error": f"Error de sistema: {error}"}, 500)
+
+
+class IPv6ThreadingHTTPServer(ThreadingHTTPServer):
+    address_family = socket.AF_INET6
+
+
+def create_server(host: str, port: int) -> ThreadingHTTPServer:
+    """ThreadingHTTPServer usa AF_INET; ``::1`` necesita AF_INET6 (FT-13)."""
+    server_class = IPv6ThreadingHTTPServer if ":" in host else ThreadingHTTPServer
+    return server_class((host, port), Handler)
 
 
 def parse_args() -> argparse.Namespace:
@@ -998,14 +1575,23 @@ def main() -> None:
     if args.host not in {"127.0.0.1", "localhost", "::1"}:
         raise SystemExit("Por seguridad, la GUI solo puede enlazarse a loopback.")
     RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
-    server = ThreadingHTTPServer((args.host, args.port), Handler)
-    print(f"Fine-tuning GUI: http://127.0.0.1:{args.port}")
+    report_external_job()
+    server = create_server(args.host, args.port)
+    # SIGTERM (kill, cierre de sesión) pasa por el mismo cierre ordenado que
+    # Ctrl+C: el job activo se cancela y se espera antes de salir.
+    signal.signal(signal.SIGTERM, _exit_on_signal)
+    stop_watcher = threading.Event()
+    threading.Thread(target=watch_pending_reconcile, args=(stop_watcher,), daemon=True).start()
+    display_host = "[::1]" if ":" in args.host else "127.0.0.1"
+    print(f"Fine-tuning GUI: http://{display_host}:{args.port}")
     print("Acceso restringido a la máquina local.")
     try:
         server.serve_forever(poll_interval=0.5)
     except KeyboardInterrupt:
         pass
     finally:
+        stop_watcher.set()
+        stop_running_job()
         server.server_close()
 
 

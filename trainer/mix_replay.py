@@ -14,8 +14,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import random
 import re
+import secrets
 import sys
 from pathlib import Path
 
@@ -78,12 +80,38 @@ def blend(
     }
 
 
-def write(path: Path, rows: list[dict]) -> None:
+def stage(path: Path, rows: list[dict]) -> Path:
+    """Escribe `rows` en un temporal junto a `path`; `publish` lo hace visible.
+
+    El temporal se crea en el mismo directorio para que `os.replace` sea atómico,
+    y con modo 0o666 sujeto al umask, igual que un `write_text` corriente.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        "".join(json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n" for row in rows),
-        encoding="utf-8",
-    )
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.{secrets.token_hex(4)}.tmp")
+    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as target:
+            target.write(
+                "".join(json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n" for row in rows)
+            )
+    except BaseException:
+        temporary.unlink(missing_ok=True)
+        raise
+    return temporary
+
+
+def publish(staged: list[tuple[Path, Path]], stale: Path | None) -> None:
+    """Reemplaza cada destino por su temporal; ante un fallo, borra los temporales."""
+    try:
+        # La validación obsoleta se borra antes de publicar el training: nunca
+        # queda un training nuevo emparejado con una validación ajena.
+        if stale is not None:
+            stale.unlink(missing_ok=True)
+        for temporary, path in staged:
+            os.replace(temporary, path)
+    finally:
+        for temporary, _ in staged:
+            temporary.unlink(missing_ok=True)
 
 
 def main() -> None:
@@ -116,12 +144,15 @@ def main() -> None:
             "usa un replay independiente."
         )
 
+    # Ambos splits se arman y validan en memoria; ningún archivo se toca hasta
+    # que los dos pasaron todos los chequeos.
     report: dict[str, object] = {"name": args.name, "ratio": args.ratio, "seed": args.seed}
     mixed, report["training"] = blend(domain, replay, args.ratio, args.seed, "replay")
     training_path = OUTPUT_DIR / f"{args.name}-training.jsonl"
-    write(training_path, mixed)
+    validation_path = OUTPUT_DIR / f"{args.name}-validation.jsonl"
     report["trainingPath"] = str(training_path.relative_to(ROOT))
 
+    mixed_validation: list[dict] | None = None
     domain_validation = sibling_validation(args.domain)
     replay_validation = sibling_validation(args.replay)
     if domain_validation and replay_validation:
@@ -133,8 +164,6 @@ def main() -> None:
         leak = count_prompt_overlaps(mixed, mixed_validation)
         if leak:
             raise SystemExit(f"La validación mezclada repite {leak} prompts del entrenamiento")
-        validation_path = OUTPUT_DIR / f"{args.name}-validation.jsonl"
-        write(validation_path, mixed_validation)
         report["validationPath"] = str(validation_path.relative_to(ROOT))
     else:
         report["validation"] = None
@@ -144,6 +173,19 @@ def main() -> None:
             "selección de checkpoint por eval_loss.",
             file=sys.stderr,
         )
+
+    staged: list[tuple[Path, Path]] = []
+    try:
+        if mixed_validation is not None:
+            staged.append((stage(validation_path, mixed_validation), validation_path))
+        staged.append((stage(training_path, mixed), training_path))
+    except BaseException:
+        for temporary, _ in staged:
+            temporary.unlink(missing_ok=True)
+        raise
+    # Sin validación se borra la de una corrida anterior para que
+    # scripts/train-adapter.sh no la empareje con este training.
+    publish(staged, stale=validation_path if mixed_validation is None else None)
 
     print(json.dumps(report, ensure_ascii=False))
 

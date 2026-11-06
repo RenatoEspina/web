@@ -10,6 +10,31 @@ dataset=$1
 adapter_name=$2
 shift 2
 
+# --- lock GPU/vLLM (bloque idéntico en scripts/train-adapter.sh y scripts/train-adapter-axolotl.sh) ---
+# Exclusión mutua con las GUIs (trainer/runtime_lock.py) y con otros
+# entrenamientos por CLI. Una GUI que ya tomó el lock lo pasa heredado en
+# LLM_BRIDGE_GPU_LOCK_FD; solo se acepta si ese descriptor es el mismo archivo.
+gpu_lock_file="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)/.runtime/gpu.lock"
+acquire_gpu_lock() {
+  if ! command -v flock >/dev/null 2>&1; then
+    echo "Error: falta 'flock' (util-linux); no se puede garantizar el uso exclusivo de la GPU." >&2
+    exit 1
+  fi
+  local inherited=${LLM_BRIDGE_GPU_LOCK_FD:-}
+  if [[ "$inherited" =~ ^[0-9]+$ && -e "/dev/fd/$inherited" && "/dev/fd/$inherited" -ef "$gpu_lock_file" ]] \
+    && flock -n "$inherited"; then
+    return 0
+  fi
+  mkdir -p -- "$(dirname -- "$gpu_lock_file")"
+  exec {gpu_lock_fd}>>"$gpu_lock_file"
+  if ! flock -n "$gpu_lock_fd"; then
+    echo "Error: otra operación de GPU/vLLM está en curso (GUI o CLI; lock $gpu_lock_file). Espera a que termine antes de entrenar." >&2
+    exit 1
+  fi
+}
+acquire_gpu_lock
+# --- fin lock GPU/vLLM ---
+
 if [[ ! -f "$dataset" && "$dataset" == *"terraria-training.jsonl" ]]; then
   python_builder=$(command -v python3 || command -v python || true)
   [[ -n "$python_builder" ]] || { echo "No se encontró Python para reconstruir Terraria." >&2; exit 1; }
@@ -90,6 +115,11 @@ except Exception:
 PY
 )
     [[ -n "$vllm_model" ]] && echo "Modelo vLLM detectado antes del entrenamiento: $vllm_model"
+    # Detener vLLM descarta los LoRA cargados: la reconciliación de la allowlist
+    # queda pendiente hasta completarse (trainer/runtime_adapters.py borra esta
+    # marca). Si una cancelación la interrumpe, la GUI la termina al volver vLLM.
+    mkdir -p -- "$(dirname -- "$gpu_lock_file")"
+    : > "$(dirname -- "$gpu_lock_file")/adapters-reconcile-pending"
     compose stop vllm
   fi
 else
@@ -99,10 +129,18 @@ fi
 restart_vllm() {
   if [[ "$vllm_running" == true ]]; then
     echo "Reiniciando vLLM..."
+    local restarted=true
     if [[ -n "$vllm_model" ]]; then
-      VLLM_MODEL="$vllm_model" compose up -d vllm || echo "Aviso: vLLM no pudo reiniciarse automáticamente." >&2
+      VLLM_MODEL="$vllm_model" compose up -d vllm || { restarted=false; echo "Aviso: vLLM no pudo reiniciarse automáticamente." >&2; }
     else
-      compose up -d vllm || echo "Aviso: vLLM no pudo reiniciarse automáticamente." >&2
+      compose up -d vllm || { restarted=false; echo "Aviso: vLLM no pudo reiniciarse automáticamente." >&2; }
+    fi
+    if [[ "$restarted" == true ]]; then
+      # El reinicio descarta los LoRA cargados dinámicamente: se recargan con
+      # validación de base o se retiran de LLM_ADAPTER_MODELS. La exportación
+      # Qwen3.5 usa este mismo intérprete Axolotl.
+      FINE_TUNE_PYTHON="$trainer_python" "$trainer_python" trainer/runtime_adapters.py --wait-vllm 600 || \
+        echo "Aviso: no se pudo reconciliar LLM_ADAPTER_MODELS; revisa la allowlist en la GUI." >&2
     fi
   fi
 }

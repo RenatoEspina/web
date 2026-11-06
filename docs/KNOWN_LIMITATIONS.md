@@ -85,194 +85,37 @@ Los números de tokens, el tope de 2200 caracteres y los minutos por época est�
 
 Con 6 GB de VRAM, varias generaciones simultáneas compiten por memoria. Un diseño multiagente debe ejecutar especialistas en serie o compartir un único modelo base con adaptadores LoRA.
 
-## Errores conocidos pendientes
+### Alcance de las correcciones de fine-tuning (2026-11-05)
 
-### Resumen
+Decisiones tomadas al corregir FT-01 a FT-13. No son errores, pero conviene conocerlas:
+
+- **Lock de GPU:** `.runtime/gpu.lock` cubre todas las acciones de ambas GUIs y `scripts/train-adapter*.sh` (y por tanto `./comandos.fish fine-tune-train`). `./comandos.fish vllm` ejecutado directamente desde la CLI no lo toma. Si `flock` no está instalado, los scripts fallan con un mensaje explícito.
+- **Cierre de la GUI y fin de un job:** `/api/shutdown` responde 409 mientras hay un job en curso. Un job no termina, ni se borra `.runtime/gpu-job.json`, mientras quede vivo algún proceso de su grupo; esto incluye procesos en segundo plano que el comando deje sin cancelar. Solo SIGTERM o Ctrl+C sobre el servidor cancelan el job y esperan a que el grupo termine; si la espera vence, envían SIGKILL al grupo antes de salir (código de salida 143 con SIGTERM). Un job huérfano de una sesión anterior se informa como `externalJob` y bloquea acciones nuevas hasta que termina.
+- **Reconciliación de la allowlist:** se ejecuta después de `./comandos.fish vllm` y de `restart_vllm` en ambos scripts, y falla de forma cerrada: solo retira una entrada inválida en sí misma (nombre inválido, directorio o archivos PEFT ausentes, metadatos inválidos, o un vLLM que sirve otra base conocida). Un error de exportación, de intérprete o de vLLM conserva la entrada y hace fallar el job; `./comandos.fish vllm` sale con código 1 en ese caso. Los scripts de entrenamiento crean `.runtime/adapters-reconcile-pending` antes de detener vLLM y solo una reconciliación completa lo borra. Así, si una cancelación interrumpe la reconciliación, la completa automáticamente un panel de fine-tuning abierto (job `reconcile-adapters`, revisado cada 5 s y reintentado a los 60 s si falla), el siguiente `./comandos.fish vllm` o `python3 trainer/runtime_adapters.py`. Sin panel abierto y sin ejecutar esos comandos, el gateway conserva la allowlist desactualizada. Un `docker compose up` manual no reconcilia: usa **Retirar de la allowlist** o vuelve a iniciar vLLM desde la GUI o la CLI.
+- **Permisos de `.env.local`:** se conserva el modo del archivo existente y un archivo nuevo se crea con 0600. Un `.env.local` que es symlink se mantiene y se reescribe su destino.
+- **Validación de payloads:** sigue ocurriendo dentro del job (202 seguido de un job fallido), así que el contrato HTTP para payloads inválidos no cambió; lo nuevo es que ningún efecto ocurre antes de validar.
+- **Estado del entorno:** `environmentReady` conserva su significado anterior (venv presente). La insignia verde usa `environmentVerified`. `./comandos.fish fine-tune-check` no actualiza el resultado persistido que lee la GUI.
+- **Backend Axolotl:** la auditoría de truncamiento usa la plantilla de TRL y Axolotl tokeniza con la suya, así que los conteos pueden diferir en unos pocos tokens de formato. Requiere `trl.chat_template_utils.get_training_chat_template`, que no se pudo comprobar sin el venv de Axolotl; si falta, falla con un mensaje claro. El manifest de Axolotl no registra los resúmenes de la auditoría ni `allowTruncation`, a diferencia de `train.py`.
+- **Comprobación de torch:** `trainer/check_dependencies.py` aplica compatibilidad binaria de CUDA (los wheels oficiales omiten arquitecturas como `sm_89`). Un torch sin CUDA o sin GPU visible solo genera una advertencia; la disponibilidad de GPU la verifica `trainer/check_environment.py`.
+
+## Errores conocidos pendientes
 
 | ID | Área | Severidad | Estado | Error |
 |----|------|-----------|--------|-------|
-| [FT-01](#ft-01-no-hay-exclusión-mutua-de-gpu-y-vllm-entre-procesos) | Fine-tuning | Alta | Confirmado (OOM plausible) | No hay exclusión mutua de GPU/vLLM entre procesos |
-| [FT-02](#ft-02-cerrar-la-gui-deja-huérfano-el-entrenamiento) | Fine-tuning | Alta | Confirmado | Cerrar la GUI deja huérfano el entrenamiento |
-| [FT-03](#ft-03-allowlist-lora-desincronizada-tras-reiniciar-vllm) | Fine-tuning | Media | Confirmado | Allowlist LoRA desincronizada tras reiniciar vLLM |
-| [FT-04](#ft-04-envlocal-se-reescribe-sin-conservar-permisos) | Seguridad | Media | Confirmado (impacto plausible) | `.env.local` se reescribe sin conservar permisos |
-| [FT-05](#ft-05-la-cancelación-no-escala-y-el-job-puede-quedar-running) | Fine-tuning | Media | Confirmado (bloqueo plausible) | La cancelación no escala y el job puede quedar `running` |
-| [FT-06](#ft-06-el-backend-axolotl-entrena-all-linear-sobre-qwen35) | Fine-tuning | Media | Confirmado | El backend Axolotl entrena `all-linear` sobre Qwen3.5 |
-| [FT-07](#ft-07-la-gui-marca-el-entorno-como-listo-sin-verificarlo) | Fine-tuning | Media | Confirmado | La GUI marca el entorno como listo sin verificarlo |
-| [FT-08](#ft-08-el-staging-de-entrenamiento-no-se-limpia-al-cancelar) | Fine-tuning | Media-baja | Confirmado | El staging de entrenamiento no se limpia al cancelar |
-| [FT-09](#ft-09-mix_replaypy-escribe-antes-de-validar) | Fine-tuning | Media-baja | Confirmado | `mix_replay.py` escribe antes de validar |
-| [FT-10](#ft-10-la-subida-de-dataset-no-captura-todas-las-excepciones) | Fine-tuning | Baja | Confirmado | La subida de dataset no captura todas las excepciones |
-| [FT-11](#ft-11-efectos-con-root-antes-de-validar-la-entrada) | Seguridad | Baja | Confirmado | Efectos con root antes de validar la entrada |
-| [FT-12](#ft-12-requirementstxt-no-fija-torch) | Entorno | Baja | Confirmado | `requirements.txt` no fija torch |
-| [FT-13](#ft-13---host-1-se-acepta-pero-falla) | Fine-tuning | Baja | Confirmado | `--host ::1` se acepta pero falla |
+| [FT-12](#ft-12-requirementstxt-no-fija-torch) | Entorno | Baja | Parcial | `requirements.txt` no fija torch |
 | [FT-14](#ft-14-solo-loopback-no-implica-solo-este-usuario) | Seguridad | Baja | Plausible | "Solo loopback" no implica "solo este usuario" |
-| [GW-01](#gw-01-host-y-port-parecen-configurables-desde-envlocal-sin-afectar-a-vite) | Gateway | Baja | Confirmado | `HOST`/`PORT` de `.env.local` no afectan a Vite |
-| [GW-02](#gw-02-la-interfaz-dice-embeddings-activos-sin-comprobar-el-servicio) | Gateway | Baja | Confirmado | "Embeddings activos" sin health check |
-| [GW-03](#gw-03-la-ui-puede-mostrar-rag-sin-documentos-seleccionados) | Gateway | Baja | Confirmado | La UI muestra RAG sin documentos seleccionados |
-| [DOC-01](#doc-01-documentación-desactualizada-sobre-all-linear) | Docs | Baja | Confirmado | Documentación desactualizada sobre `all-linear` |
 
-Los errores GW-01, GW-02, GW-03 y FT-07 ya figuraban en este documento; se verificó el 2026-11-05 que siguen presentes en el código.
+### FT-12: `requirements.txt` no fija torch
 
-### Fine-tuning
+`trainer/requirements.txt` no declara torch: pip lo resuelve de forma transitiva (vía `bitsandbytes` y `accelerate`) a la última versión, lo que no es reproducible y puede no calzar con el driver CUDA.
 
-#### FT-01: no hay exclusión mutua de GPU y vLLM entre procesos
+**Estado:** `trainer/check_dependencies.py` ya informa la versión de torch y su build de CUDA, y falla si la GPU visible no está soportada. Falta fijar `torch==X` con su index CUDA, lo que requiere decidir y probar una versión en el venv real del trainer.
 
-`trainer/gui_server.py:69-70, 808-819`: `STATE_LOCK` y `CURRENT_JOB` son globales del proceso. La GUI básica (`:3031`), la GUI Axolotl (`:3032`) y `./comandos.fish fine-tune-train` pueden ejecutarse a la vez.
+### FT-14: "solo loopback" no implica "solo este usuario"
 
-**Impacto:** la GUI Axolotl entrena y su script detiene vLLM (`scripts/train-adapter-axolotl.sh:84`). La GUI básica ve vLLM detenido y lanza otro entrenamiento: quedan dos QLoRA en 6 GB, con riesgo de OOM. Cuando termina el primero, su trap `restart_vllm` levanta vLLM (0.70 de VRAM) mientras el segundo sigue entrenando. Ambos procesos reescriben `.env.local`.
+`GET /api/bootstrap` (`trainer/gui_server.py`) entrega el token CSRF a cualquier proceso local. En un host multiusuario, otro usuario puede entrenar, borrar adaptadores o iniciar Docker con la identidad del dueño de la GUI. Depende del host.
 
-**Corrección prevista:** un lock entre procesos (`fcntl.flock` sobre `.runtime/gpu.lock`) tomado por `start_job` y por `scripts/train-adapter*.sh` (`flock`); rechazar la acción si está ocupado.
-
-#### FT-02: cerrar la GUI deja huérfano el entrenamiento
-
-`trainer/gui_server.py:976-979`: `/api/shutdown` apaga el servidor sin cancelar el job. `run_command` lanza el hijo con `start_new_session=True` (`:364`), así que sobrevive.
-
-**Impacto:** al presionar **Cerrar panel** (o matar la GUI) durante un entrenamiento, este sigue ocupando la GPU. Al relanzar `./fine-tune-gui`, `CURRENT_JOB=None` y se permite otro entrenamiento o `start-vllm`, que compite con el huérfano. vLLM queda detenido hasta que el huérfano termine.
-
-**Corrección prevista:** rechazar el shutdown con un job `running`, o cancelarlo y esperarlo; registrar handlers de `atexit` y SIGTERM; persistir el PGID del job en `.runtime/` y comprobarlo al arrancar.
-
-#### FT-03: allowlist LoRA desincronizada tras reiniciar vLLM
-
-`scripts/train-adapter.sh:150-163` (`restart_vllm`), `comandos.fish:378` (`compose up -d vllm`) y `trainer/gui_server.py:719-726` (`stop-vllm`) reinician vLLM. `docker-compose.yml` no usa `--lora-modules`, así que los adaptadores cargados dinámicamente se pierden.
-
-**Impacto:** se carga el LoRA `a` (queda en `LLM_ADAPTER_MODELS`) y luego se entrena `b`. El reinicio descarga `a`, pero sigue en la allowlist: el gateway lo ofrece y responde 409 (`lib/llm/runtime.ts` valida contra `/v1/models`). **Descargar** no sirve porque `loaded_adapter_path` (`gui_server.py:466-473`) lanza una excepción antes de tocar la allowlist. Además, `start_vllm` cambia `LLM_MODEL` (`comandos.fish:388`) sin purgar los adaptadores entrenados sobre la base anterior.
-
-**Corrección prevista:** reconciliar después de cada (re)arranque, recargando los adaptadores de la allowlist con validación de base o retirándolos; permitir "retirar de la allowlist" cuando el adaptador no esté cargado.
-
-#### FT-05: la cancelación no escala y el job puede quedar `running`
-
-`trainer/gui_server.py:822-834` envía SIGINT una sola vez. `run_command` (`:369`) lee stdout hasta EOF sin timeout.
-
-**Impacto:** si un hijo ignora o maneja lento SIGINT (pip, `docker compose pull`, `fish` dentro de `wait_for_url`, workers de accelerate o Axolotl), el job nunca termina y todas las acciones responden "Ya hay una operación en curso" hasta matar procesos a mano.
-
-**Corrección prevista:** SIGINT, esperar unos 10 s, SIGTERM, esperar y SIGKILL al grupo; marcar el job `cancelled` aunque el stdout siga abierto.
-
-#### FT-06: el backend Axolotl entrena `all-linear` sobre Qwen3.5
-
-`trainer/train_axolotl.py:111-112` fija `lora_target_linear: True`. `trainer/train.py:35-50` documenta que adaptar `in_proj_a`/`in_proj_b` de las capas de atención lineal de Qwen3.5 produce bucles de repetición, y por eso el backend básico usa `attention-mlp` por defecto. La medición de `docs/FINE_TUNING_DEBUG.md:175-176` lo respalda: `all-linear` obtuvo 3/60 frente a 39/60 de `attention-mlp`.
-
-**Impacto:** el mismo dataset produce un adapter sano en la GUI básica y uno que repite en bucle en la GUI Axolotl. Axolotl tampoco aplica la auditoría de truncamiento de `train.py:174-249` y entrena el JSONL crudo, sin el `strip()` de `load_jsonl`.
-
-**Corrección prevista:** para `qwen3_5`, emitir `lora_target_modules` con el preset `attention-mlp` y registrarlo en el manifest.
-
-#### FT-07: la GUI marca el entorno como listo sin verificarlo
-
-`trainer/gui_server.py:327` calcula `environmentReady` como `trainer_python().is_file()`. Encontrar el ejecutable Python del venv no garantiza que PyTorch, CUDA, `bitsandbytes` y NF4 funcionen.
-
-**Impacto:** un entorno creado parcialmente o con dependencias rotas se muestra como **Entorno: listo** hasta ejecutar la comprobación real.
-
-**Corrección prevista:** separar al menos `venvPresent` de `environmentVerified` y basar el estado verde en una comprobación real o en el resultado persistido de la última comprobación válida.
-
-#### FT-08: el staging de entrenamiento no se limpia al cancelar
-
-`trainer/train.py:577-579` y `trainer/train_axolotl.py:318-320` limpian con `except Exception`. La cancelación (SIGINT) llega como `KeyboardInterrupt`, que es `BaseException`.
-
-**Impacto:** cada entrenamiento cancelado deja `adapters/.<name>.training-*` o `.axolotl-output-*` con checkpoints y estado del optimizador. `list_adapters` no los muestra (`SAFE_NAME` exige un primer carácter alfanumérico) y `delete-adapter` no los alcanza, así que el disco se va llenando.
-
-**Corrección prevista:** `except BaseException`, o un `finally` con un flag de éxito.
-
-#### FT-09: `mix_replay.py` escribe antes de validar
-
-`trainer/mix_replay.py:121-122` escribe el split de training antes del chequeo de fuga (`:133-135`). La rama sin validación (`:139-146`) no borra un `<name>-validation.jsonl` anterior.
-
-**Impacto:** si una corrida previa dejó `X-validation.jsonl` y la nueva aborta por fuga o no tiene validación, queda un `X-training.jsonl` nuevo junto a la validación vieja. `scripts/train-adapter.sh:95-99` los empareja: el checkpoint se elige con un split ajeno, o el chequeo de overlap aborta con un error confuso.
-
-**Corrección prevista:** armar ambos splits en memoria, validarlos y escribirlos atómicamente; si no hay validación, borrar la obsoleta.
-
-#### FT-10: la subida de dataset no captura todas las excepciones
-
-`trainer/gui_server.py:162-167` captura solo `OSError`, `ValueError` y `JSONDecodeError`. Un JSON muy anidado lanza `RecursionError`, que no es `ValueError` (verificado).
-
-**Impacto:** con una línea `{"messages":[[[[...` la excepción escapa de `do_POST` (`:981-986`), el cliente no recibe respuesta JSON y queda `trainer/datasets/.<name>.<hex>.tmp`. Relacionado: `int_arg` con `1e400` lanza `OverflowError` (`:138`), aunque dentro del job.
-
-**Corrección prevista:** capturar `Exception` en `dataset_summary` y borrar el temporal en un `finally`.
-
-#### FT-13: `--host ::1` se acepta pero falla
-
-`trainer/gui_server.py:998-1001`: `ThreadingHTTPServer` usa `AF_INET` y falla con `gaierror` ante una dirección IPv6.
-
-**Corrección prevista:** una subclase con `address_family = AF_INET6` cuando el host contiene `:`.
-
-### Seguridad
-
-#### FT-04: `.env.local` se reescribe sin conservar permisos
-
-`trainer/gui_server.py:584-585` (`write_text` + `os.replace`) y `comandos.fish:260-270` (`awk > tmp; mv`) crean un archivo nuevo.
-
-**Impacto:** si `.env.local` tiene modo 0600 y contiene `APP_TOKEN` o una API key (`lib/llm/config.ts`), tras cargar un adaptador o iniciar vLLM queda con el umask (normalmente 0644), legible por otros usuarios. Un symlink se reemplaza por un archivo regular. El modo actual del archivo no se pudo comprobar en la revisión.
-
-**Corrección prevista:** crear el temporal con `os.open(tmp, O_CREAT | O_EXCL | O_WRONLY, 0o600)` o copiar el modo con `shutil.copymode`; usar `umask 077` en fish.
-
-#### FT-11: efectos con root antes de validar la entrada
-
-`trainer/gui_server.py:646-660` y `trainer/gui_server_axolotl.py:234-248` llaman a `ensure_adapter_dir_writable`, que puede lanzar un contenedor `--user 0:0` con `chown -R`, antes de `validate_adapter_name`, `validate_model` y los hiperparámetros.
-
-**Corrección prevista:** validar todo el payload antes de cualquier efecto.
-
-#### FT-14: "solo loopback" no implica "solo este usuario"
-
-`GET /api/bootstrap` (`trainer/gui_server.py:907-908`) entrega el token CSRF a cualquier proceso local. En un host multiusuario, otro usuario puede entrenar, borrar adaptadores o iniciar Docker con la identidad del dueño de la GUI. Depende del host.
-
-**Corrección prevista (opcional):** escuchar en un socket Unix con permisos 0600, o entregar el token mediante un archivo con modo 0600.
-
-### Entorno
-
-#### FT-12: `requirements.txt` no fija torch
-
-`trainer/requirements.txt` no declara torch: pip lo resuelve de forma transitiva (vía `bitsandbytes` y `accelerate`) a la última versión. No es reproducible, puede no calzar con el driver CUDA, y `trainer/check_dependencies.py` no lo verifica.
-
-**Corrección prevista:** fijar `torch==X` con el index CUDA explícito.
-
-### Gateway y chat
-
-#### GW-01: `HOST` y `PORT` parecen configurables desde `.env.local` sin afectar a Vite
-
-`.env.example` presenta `HOST` y `PORT` como configuración normal, mientras `vite.config.ts:48-49` lee `process.env.HOST` y `process.env.PORT` durante la evaluación de la configuración.
-
-**Impacto:** si esos valores existen únicamente en `.env.local`, pueden no modificar el servidor de desarrollo como espera el usuario.
-
-**Corrección prevista:** cargar explícitamente los archivos de entorno en `vite.config.ts` mediante `loadEnv`, o retirar esas variables de la configuración documentada.
-
-#### GW-02: la interfaz dice "embeddings activos" sin comprobar el servicio
-
-`app/page.tsx:547` deriva el texto de `embedding.enabled`, que significa que los embeddings están habilitados por configuración. `/api/health` comprueba el proveedor generativo, no el servicio de embeddings.
-
-**Impacto:** Ollama puede estar caído y la UI seguir mostrando **embeddings activos**. La indexación degrada correctamente a recuperación léxica, pero el estado visual es engañoso.
-
-**Corrección prevista:** usar **habilitados** para el estado de configuración y reservar **activos/disponibles** para un health check real.
-
-#### GW-03: la UI puede mostrar RAG sin documentos seleccionados
-
-El selector (`app/page.tsx:172-173`) puede quedar en `RAG` con `selectedDocumentIds=[]`. El backend interpreta correctamente una selección vacía como ausencia de contexto documental y devuelve `mode=none`.
-
-**Impacto:** la semántica del backend es correcta, pero la interfaz sugiere que la siguiente pregunta usará RAG cuando no usará ningún PDF.
-
-**Corrección prevista:** mostrar "selecciona al menos un documento" o reflejar el modo efectivo `none` mientras la selección esté vacía.
-
-### Documentación
-
-#### DOC-01: documentación desactualizada sobre `all-linear`
-
-Desde que `attention-mlp` es el valor por defecto (`docs/FINE_TUNING_DEBUG.md:183`), varios documentos siguen describiendo `all-linear` como configuración vigente:
-
-- `docs/FINE_TUNING_AXOLOTL.md:45` presenta `lora_target_linear: true` como "equivalente práctico al objetivo `all-linear` del backend básico", cuando el backend básico ya no usa `all-linear` (ver FT-06).
-- `docs/TERRARIA_FINE_TUNING.md:141` indica que se mantiene `all-linear` fijo en el plan experimental.
-- `docs/FINE_TUNING_DATASETS.md:133` atribuye parte del problema de Terraria a `all-linear` sin aclarar que ya no es el valor por defecto.
-
-**Corrección prevista:** actualizar esos pasajes junto con la corrección de FT-06.
-
-## Tests faltantes
-
-La revisión del 2026-11-05 no encontró tests para:
-
-- la cancelación de jobs y su escalamiento (FT-05);
-- el shutdown con un job activo (FT-02);
-- el lock entre GUIs y CLI (FT-01);
-- la conservación del modo de `.env.local` (FT-04);
-- la limpieza del staging ante `KeyboardInterrupt` (FT-08);
-- la reconciliación de la allowlist tras reiniciar vLLM (FT-03);
-- los errores de upload que no son `ValueError` (FT-10);
-- los target modules de Axolotl (FT-06);
-- el orden de escritura de `mix_replay` (FT-09).
+**Pendiente de decisión:** cualquier corrección (socket Unix con permisos 0600, o token entregado por un archivo 0600) cambia cómo el navegador obtiene el token, así que primero hay que decidir el flujo de arranque de la GUI.
 
 ## Revisado sin problemas (2026-11-05)
 
@@ -286,11 +129,30 @@ La revisión del subsistema de fine-tuning verificó como correctos:
 - `validate_adapter_base` compara el `root` y no el alias; load, unload y delete revierten vLLM si falla la allowlist;
 - `train.py` no sobrescribe un adaptador existente y valida la máscara de assistant.
 
-Ejecuciones de esa revisión: compilación de todos los `trainer/*.py` sin errores; `python -m unittest` con 46 OK y 5 omitidos; tests de Node del fine-tuning con 52 OK y 1 fallo de entorno (`finetune-review-regressions.test.mjs` requiere `node_modules/vite`).
-
 ## Correcciones recientes relacionadas
 
-Los siguientes problemas ya no se consideran errores conocidos porque cuentan con corrección y regresión:
+Los siguientes problemas ya no se consideran errores conocidos porque cuentan con corrección y regresión.
+
+### Corregidos el 2026-11-05
+
+- **FT-01:** un lock entre procesos (`.runtime/gpu.lock`, `fcntl.flock`/`flock`) compartido por ambas GUIs y `scripts/train-adapter*.sh`; una segunda acción de GPU recibe 409 con un mensaje que nombra el lock.
+- **FT-02:** `/api/shutdown` ya no deja huérfano un entrenamiento; el PGID del job se persiste en `.runtime/gpu-job.json` (0600) y se comprueba al arrancar.
+- **FT-03:** la allowlist LoRA se reconcilia tras cada (re)arranque de vLLM (`trainer/runtime_adapters.py`); un adaptador de la allowlist que no está cargado se puede retirar.
+- **FT-04:** reescribir `.env.local` ya no lo deja legible por otros usuarios (Python con `mkstemp` + `copymode`; fish con `umask 077`).
+- **FT-05:** la cancelación escala SIGINT → SIGTERM (10 s) → SIGKILL (5 s) sobre el grupo de procesos, y el job termina `cancelled` aunque el stdout siga abierto.
+- **FT-06:** el backend Axolotl usa el preset `attention-mlp` para Qwen3.5, lo registra en el manifest y aplica la misma normalización y auditoría de truncamiento que `train.py` (con `--allow-truncation`).
+- **FT-07:** la GUI distingue `venvPresent` de `environmentVerified`; la insignia verde depende de una comprobación real persistida.
+- **FT-08:** cancelar un entrenamiento (SIGINT o SIGTERM) borra el staging de esa corrida en ambos backends.
+- **FT-09:** `mix_replay.py` valida ambos splits antes de escribir, los publica de forma atómica y borra una validación obsoleta.
+- **FT-10:** cualquier error al parsear un dataset subido responde 422 en JSON y el temporal siempre se borra. En Python 3.14 `RecursionError` ya respondía 409, pero el temporal sí quedaba. El JSON con más de 512 niveles de anidamiento se rechaza con un límite fijo (400 "JSON inválido." en la solicitud, 422 en el dataset), sin depender de la pila del intérprete, que cambia entre máquinas.
+- **FT-11:** ambas GUIs validan todo el payload antes de cualquier efecto, incluido el contenedor root de `ensure_adapter_dir_writable`.
+- **FT-13:** `--host ::1` sirve por IPv6.
+- **GW-01:** `HOST` y `PORT` de `.env.local` llegan al servidor de desarrollo de Vite (`loadEnv`); las variables del proceso siguen teniendo prioridad.
+- **GW-02:** `/api/health` informa la disponibilidad real de los embeddings sin cambiar su código de estado; la UI distingue *habilitados*, *disponibles* y *no disponibles*.
+- **GW-03:** con RAG o CAG y ningún documento seleccionado, la UI pide seleccionar al menos uno.
+- **DOC-01:** la documentación ya no presenta `all-linear` como valor por defecto.
+
+### Anteriores
 
 - una selección explícita `documentIds: []` ya no utiliza todos los documentos por accidente;
 - RAG solo publica fuentes cuyos chunks realmente entraron al contexto;

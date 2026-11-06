@@ -17,13 +17,24 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from transformers import AutoConfig
+from transformers import AutoConfig, AutoTokenizer
 
 from dataset_validation import load_jsonl
-from training_quality import count_prompt_overlaps, sha256_file, stable_sha256
+from training_quality import (
+    exit_on_sigterm,
+    TARGET_MODULE_PRESETS,
+    audit_token_lengths,
+    count_prompt_overlaps,
+    sha256_file,
+    stable_sha256,
+)
 
 SAFE_NAME = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$")
 AXOLOTL_VERSION = "0.18.0"
+# Arquitecturas híbridas con capas de atención lineal: `all-linear` adaptaría
+# sus puertas de estado (`in_proj_a`/`in_proj_b`) y degeneraría en bucles de
+# repetición. Ver TARGET_MODULE_PRESETS en training_quality.py.
+HYBRID_LINEAR_ATTENTION_MODEL_TYPES = {"qwen3_5", "qwen3_5_text"}
 
 
 def arguments() -> argparse.Namespace:
@@ -43,6 +54,11 @@ def arguments() -> argparse.Namespace:
     parser.add_argument("--gradient-accumulation", type=int, default=8)
     parser.add_argument("--max-length", type=int, default=1024)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument(
+        "--allow-truncation",
+        action="store_true",
+        help="Permite continuar aunque una respuesta assistant supere --max-length.",
+    )
     return parser.parse_args()
 
 
@@ -80,6 +96,46 @@ def model_type(model: str, revision: str | None) -> str:
     return str(config.model_type)
 
 
+def target_modules_preset(resolved_model_type: str | None) -> str:
+    """Elige el mismo preset que el backend básico para las arquitecturas híbridas."""
+    if resolved_model_type in HYBRID_LINEAR_ATTENTION_MODEL_TYPES:
+        return "attention-mlp"
+    return "all-linear"
+
+
+def lora_targets(preset: str) -> dict[str, Any]:
+    if preset == "all-linear":
+        # Equivalente de Axolotl a target_modules='all-linear' de PEFT.
+        return {"lora_target_linear": True}
+    return {"lora_target_modules": list(TARGET_MODULE_PRESETS[preset])}
+
+
+def audit_tokenizer(model: str, revision: str | None):
+    """Carga el tokenizer con la misma plantilla de máscara que usa train.py."""
+    kwargs: dict[str, Any] = {"trust_remote_code": False}
+    if revision:
+        kwargs["revision"] = revision
+    tokenizer = AutoTokenizer.from_pretrained(model, **kwargs)
+    try:
+        from trl.chat_template_utils import get_training_chat_template
+    except ImportError as error:
+        raise RuntimeError(
+            "La auditoría de truncamiento necesita trl.chat_template_utils en el entorno "
+            "Axolotl. Actualiza el entorno desde la GUI Axolotl."
+        ) from error
+    patched = get_training_chat_template(tokenizer)
+    if patched is not None:
+        tokenizer.chat_template = patched
+    return tokenizer
+
+
+def write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
+    path.write_text(
+        "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows),
+        encoding="utf-8",
+    )
+
+
 def dataset_entry(path: Path) -> dict[str, Any]:
     return {
         "path": str(path),
@@ -91,12 +147,28 @@ def dataset_entry(path: Path) -> dict[str, Any]:
     }
 
 
-def build_config(args: argparse.Namespace, staging: Path, work_dir: Path) -> dict[str, Any]:
+def build_config(
+    args: argparse.Namespace,
+    staging: Path,
+    work_dir: Path,
+    *,
+    preset: str = "all-linear",
+    train_path: Path | None = None,
+    validation_path: Path | None = None,
+) -> dict[str, Any]:
+    """Genera la configuración Axolotl.
+
+    `train_path` y `validation_path` apuntan a las copias normalizadas por
+    load_jsonl; sin ellas se usan los archivos originales.
+    """
+    validation_source = validation_path or (
+        args.validation_dataset.resolve() if args.validation_dataset else None
+    )
     config: dict[str, Any] = {
         "base_model": args.model,
         "strict": False,
         "trust_remote_code": False,
-        "datasets": [dataset_entry(args.dataset.resolve())],
+        "datasets": [dataset_entry(train_path or args.dataset.resolve())],
         "val_set_size": 0.0,
         "dataset_prepared_path": str(work_dir / "prepared"),
         "output_dir": str(staging),
@@ -108,8 +180,7 @@ def build_config(args: argparse.Namespace, staging: Path, work_dir: Path) -> dic
         "load_in_4bit": True,
         "load_in_8bit": False,
         "adapter": "qlora",
-        # Closest Axolotl equivalent to PEFT target_modules='all-linear'.
-        "lora_target_linear": True,
+        **lora_targets(preset),
         "lora_r": args.rank,
         "lora_alpha": args.alpha,
         "lora_dropout": args.dropout,
@@ -133,8 +204,8 @@ def build_config(args: argparse.Namespace, staging: Path, work_dir: Path) -> dic
         "dataset_processes": 1,
         "wandb_project": None,
     }
-    if args.validation_dataset:
-        config["test_datasets"] = [dataset_entry(args.validation_dataset.resolve())]
+    if validation_source:
+        config["test_datasets"] = [dataset_entry(validation_source)]
         config["evals_per_epoch"] = 1
     if args.model_revision:
         config["revision_of_model"] = args.model_revision
@@ -226,7 +297,33 @@ def main() -> None:
     config_path = work_dir / "config.yaml"
     try:
         resolved_model_type = model_type(args.model, args.model_revision)
-        config = build_config(args, staging, work_dir)
+        preset = target_modules_preset(resolved_model_type)
+
+        # Misma auditoría de truncamiento que train.py, antes de ocupar la GPU.
+        tokenizer = audit_tokenizer(args.model, args.model_revision)
+        audit_token_lengths(tokenizer, examples, args.max_length, "train", args.allow_truncation)
+        if validation_examples:
+            audit_token_lengths(
+                tokenizer, validation_examples, args.max_length, "validation", args.allow_truncation
+            )
+
+        # Axolotl entrena las copias normalizadas por load_jsonl (strip de
+        # content, sin campos extra), no el JSONL crudo.
+        train_path = work_dir / "training.jsonl"
+        write_jsonl(train_path, examples)
+        validation_path = None
+        if validation_examples:
+            validation_path = work_dir / "validation.jsonl"
+            write_jsonl(validation_path, validation_examples)
+
+        config = build_config(
+            args,
+            staging,
+            work_dir,
+            preset=preset,
+            train_path=train_path,
+            validation_path=validation_path,
+        )
         config_path.write_text(
             yaml.safe_dump(config, sort_keys=False, allow_unicode=True), encoding="utf-8"
         )
@@ -288,7 +385,8 @@ def main() -> None:
                 "rank": args.rank,
                 "alpha": args.alpha,
                 "dropout": args.dropout,
-                "targetModules": "all-linear",
+                "targetModules": preset,
+                "targetModuleSuffixes": TARGET_MODULE_PRESETS[preset],
                 "assistantOnlyLoss": True,
                 "epochs": args.epochs,
                 "learningRate": args.learning_rate,
@@ -315,7 +413,10 @@ def main() -> None:
         )
         staging.rename(destination)
         print(json.dumps({"adapter": str(destination), "backend": "axolotl", "metrics": metrics}))
-    except Exception:
+    except BaseException:
+        # BaseException incluye KeyboardInterrupt: cancelar desde la GUI (SIGINT)
+        # también borra el staging de esta corrida. Tras el rename ya no existe,
+        # así que nunca toca el adaptador publicado.
         shutil.rmtree(staging, ignore_errors=True)
         raise
     finally:
@@ -323,4 +424,5 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    exit_on_sigterm()
     main()
