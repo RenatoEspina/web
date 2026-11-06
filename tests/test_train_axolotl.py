@@ -9,7 +9,7 @@ import unittest
 from contextlib import redirect_stdout
 from io import StringIO
 from pathlib import Path
-from subprocess import CompletedProcess
+from subprocess import CalledProcessError, CompletedProcess
 from types import ModuleType, SimpleNamespace
 from unittest import mock
 
@@ -216,6 +216,61 @@ class TrainAxolotlCliTests(unittest.TestCase):
         result = json.loads(output.strip().splitlines()[-1])
         self.assertEqual(result["adapter"], str((self.output_root / "demo").resolve()))
         self.assertEqual(result["backend"], "axolotl")
+
+    def create_unrelated_entries(self) -> dict[str, str]:
+        """Otro adaptador terminado y el staging de otra corrida, que nunca se tocan."""
+        entries = {
+            "existing/adapter_config.json": "{}",
+            ".other.axolotl-output-abc123/checkpoint-1/optimizer.pt": "estado",
+        }
+        for relative, content in entries.items():
+            path = self.output_root / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content, encoding="utf-8")
+        return entries
+
+    def assert_only(self, entries: dict[str, str]) -> None:
+        files = {
+            str(path.relative_to(self.output_root)): path.read_text(encoding="utf-8")
+            for path in self.output_root.rglob("*")
+            if path.is_file()
+        }
+        self.assertEqual(files, entries)
+        self.assertEqual(
+            sorted(path.name for path in self.output_root.iterdir()),
+            sorted({relative.split("/")[0] for relative in entries}),
+        )
+
+    def test_cancelled_run_removes_only_its_own_staging_and_work_dir(self):
+        entries = self.create_unrelated_entries()
+        self.run_effect = KeyboardInterrupt()
+
+        with self.assertRaises(KeyboardInterrupt):
+            self.run_cli()
+
+        self.assertEqual(len(self.calls), 1)
+        self.assert_only(entries)
+
+    def test_failed_run_still_removes_its_staging_and_work_dir(self):
+        entries = self.create_unrelated_entries()
+        self.run_effect = CalledProcessError(1, ["axolotl", "train"])
+
+        with self.assertRaises(CalledProcessError):
+            self.run_cli()
+
+        self.assert_only(entries)
+
+    def test_existing_adapter_is_never_overwritten(self):
+        entries = self.create_unrelated_entries()
+        entries["demo/adapter_config.json"] = '{"previo": true}'
+        (self.output_root / "demo").mkdir()
+        (self.output_root / "demo" / "adapter_config.json").write_text('{"previo": true}', encoding="utf-8")
+
+        with self.assertRaisesRegex(FileExistsError, "El adaptador ya existe"):
+            self.run_cli()
+
+        self.assertEqual(self.calls, [])
+        self.assert_only(entries)
 
 
 if __name__ == "__main__":
