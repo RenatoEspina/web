@@ -124,10 +124,18 @@ fi
 restart_vllm() {
   if [[ "$vllm_running" == true ]]; then
     echo "Reiniciando vLLM..."
+    local restarted=true
     if [[ -n "$vllm_model" ]]; then
-      VLLM_MODEL="$vllm_model" compose up -d vllm || echo "Aviso: vLLM no pudo reiniciarse automáticamente." >&2
+      VLLM_MODEL="$vllm_model" compose up -d vllm || { restarted=false; echo "Aviso: vLLM no pudo reiniciarse automáticamente." >&2; }
     else
-      compose up -d vllm || echo "Aviso: vLLM no pudo reiniciarse automáticamente." >&2
+      compose up -d vllm || { restarted=false; echo "Aviso: vLLM no pudo reiniciarse automáticamente." >&2; }
+    fi
+    if [[ "$restarted" == true ]]; then
+      # El reinicio descarta los LoRA cargados dinámicamente: se recargan con
+      # validación de base o se retiran de LLM_ADAPTER_MODELS. La exportación
+      # Qwen3.5 usa este mismo intérprete Axolotl.
+      FINE_TUNE_PYTHON="$trainer_python" "$trainer_python" trainer/runtime_adapters.py --wait-vllm 600 || \
+        echo "Aviso: no se pudo reconciliar LLM_ADAPTER_MODELS; revisa la allowlist en la GUI." >&2
     fi
   fi
 }

@@ -282,6 +282,24 @@ function persist_llm_model
     mv "$temporary" "$env_file"; or fail "No fue posible actualizar .env.local."
 end
 
+function reconcile_adapters
+    # Reiniciar vLLM descarta los LoRA cargados dinámicamente: recarga los de
+    # LLM_ADAPTER_MODELS con validación de base o los retira de la allowlist.
+    set -l python_command ""
+    for candidate in python3.13 python3 python
+        if command -sq $candidate
+            set python_command $candidate
+            break
+        end
+    end
+    if test -z "$python_command"
+        echo "Aviso: no se encontró Python para reconciliar LLM_ADAPTER_MODELS." >&2
+        return 0
+    end
+    $python_command trainer/runtime_adapters.py $argv; or echo \
+        "Aviso: no se pudo reconciliar LLM_ADAPTER_MODELS; revisa la allowlist en la GUI." >&2
+end
+
 function prepare_embeddings
     require_docker
     set -l model $argv[1]
@@ -400,6 +418,9 @@ function start_vllm
     persist_llm_model "$model"
     echo "LLM_MODEL sincronizado en .env.local: $model"
     echo "Si la web ya estaba ejecutándose, reiníciala para que relea .env.local."
+
+    # Un LoRA entrenado sobre la base anterior no se recarga: se retira.
+    reconcile_adapters
 
     # Con vLLM ya iniciado, confirma que Ollama realmente puede servir embeddings.
     verify_embeddings "$default_embedding_model"

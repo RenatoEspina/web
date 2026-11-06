@@ -172,3 +172,10 @@ test("el HF token de entrenamiento es efímero y no viaja por argv", () => {
   assert.doesNotMatch(server, /--hf-token/);
   assert.doesNotMatch(server, /os\.environ\["HF_TOKEN"\]\s*=/);
 });
+
+test("la GUI permite retirar de la allowlist un adaptador que vLLM ya no sirve", () => {
+  assert.match(gui, /allowlisted=new Set\(status\.allowlistedAdapters\|\|\[\]\)/);
+  assert.match(gui, /!isLoaded&&allowlisted\.has\(a\.name\)\?`<button class="btn secondary" data-adapter="\$\{escapeHtml\(a\.name\)\}" data-action="unload-adapter">Retirar de la allowlist<\/button>`/);
+  assert.match(server, /"allowlistedAdapters": allowlisted_adapters\(\)/);
+  assert.match(server, /solo se retira de LLM_ADAPTER_MODELS/);
+});

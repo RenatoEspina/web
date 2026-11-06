@@ -9,6 +9,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import textwrap
 import unittest
 from pathlib import Path
 
@@ -155,6 +156,97 @@ class TrainingScriptLockTests(unittest.TestCase):
         self.assertIn(LOCK_MESSAGE, result.stderr)
         self.assertIn("El entrenamiento terminó con error", result.stderr)
         self.assertFalse(project.docker_log.exists())
+
+
+@unittest.skipUnless(shutil.which("flock"), "requiere flock (util-linux)")
+class TrainingScriptRestartTests(unittest.TestCase):
+    """FT-03: reiniciar vLLM después de entrenar reconcilia la allowlist."""
+
+    def run_training(self, script, *, vllm_running=True, train_exit=0):
+        project = ScratchProject(self)
+        events = project.root / "events.log"
+        running = "echo vllm" if vllm_running else "true"
+        project.fake("docker", textwrap.dedent(f"""\
+            printf 'docker %s\\n' "$*" >> {events}
+            if [[ "$*" == "compose -p llm-bridge ps --status running --services" ]]; then {running}; fi
+            exit 0
+        """))
+        python = project.fake("trainer-python", textwrap.dedent(f"""\
+            printf 'python %s FINE_TUNE_PYTHON=%s\\n' "$*" "${{FINE_TUNE_PYTHON:-}}" >> {events}
+            case "$1" in
+              -) cat >/dev/null; echo "Org/Base" ;;
+              trainer/train.py|trainer/train_axolotl.py) exit {train_exit} ;;
+            esac
+            exit 0
+        """))
+        dataset = project.root / "datos.jsonl"
+        dataset.write_text('{"messages": []}\n', encoding="utf-8")
+        env = project.env(FINE_TUNE_PYTHON=str(python), FINE_TUNE_AXOLOTL_PYTHON=str(python))
+        result = project.run_script(script, str(dataset), "demo", env=env)
+        lines = events.read_text(encoding="utf-8").splitlines() if events.exists() else []
+        return result, lines, python
+
+    def index(self, lines, fragment):
+        matches = [number for number, line in enumerate(lines) if fragment in line]
+        self.assertTrue(matches, f"{fragment!r} no aparece en {lines}")
+        return matches[0]
+
+    def test_restart_after_training_reconciles_allowlist(self):
+        for script in SCRIPTS:
+            with self.subTest(script=script):
+                result, lines, python = self.run_training(script)
+
+                self.assertEqual(result.returncode, 0, result.stderr)
+                stop = self.index(lines, "compose -p llm-bridge stop vllm")
+                train = self.index(lines, "trainer/train")
+                restart = self.index(lines, "compose -p llm-bridge up -d vllm")
+                reconcile = self.index(lines, "trainer/runtime_adapters.py --wait-vllm 600")
+                self.assertLess(stop, train)
+                self.assertLess(train, restart)
+                self.assertLess(restart, reconcile)
+                self.assertIn(f"FINE_TUNE_PYTHON={python}", lines[reconcile])
+
+    def test_failed_training_still_restarts_and_reconciles(self):
+        result, lines, _ = self.run_training("train-adapter.sh", train_exit=3)
+
+        self.assertEqual(result.returncode, 3)
+        self.assertLess(self.index(lines, "compose -p llm-bridge up -d vllm"),
+                        self.index(lines, "trainer/runtime_adapters.py --wait-vllm 600"))
+
+    def test_vllm_that_was_stopped_is_neither_restarted_nor_reconciled(self):
+        for script in SCRIPTS:
+            with self.subTest(script=script):
+                result, lines, _ = self.run_training(script, vllm_running=False)
+
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertFalse([line for line in lines if "up -d vllm" in line or "runtime_adapters" in line])
+                self.index(lines, "trainer/train")
+
+
+@unittest.skipUnless(shutil.which("fish"), "requiere fish")
+class FishVllmReconcileTests(unittest.TestCase):
+    def test_start_vllm_reconciles_allowlist_after_vllm_is_healthy(self):
+        project = ScratchProject(self)
+        events = project.root / "events.log"
+        project.fake("docker", f"printf 'docker %s\\n' \"$*\" >> {events}\nexit 0\n")
+        project.fake("curl", f"printf 'curl %s\\n' \"$*\" >> {events}\nexit 0\n")
+        for name in ("python3.13", "python3", "python"):
+            project.fake(name, f"printf 'python %s\\n' \"$*\" >> {events}\nexit 0\n")
+
+        result = subprocess.run(
+            ["fish", str(project.root / "comandos.fish"), "vllm", "Org/Modelo"],
+            cwd=project.root, env=project.env(LLM_BRIDGE_NONINTERACTIVE="1", HF_TOKEN=""),
+            capture_output=True, text=True, timeout=60,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        lines = events.read_text(encoding="utf-8").splitlines()
+        up = next(number for number, line in enumerate(lines) if "compose -p llm-bridge up -d vllm" in line)
+        health = next(number for number, line in enumerate(lines) if "8000/health" in line)
+        reconcile = [number for number, line in enumerate(lines) if line == "python trainer/runtime_adapters.py"]
+        self.assertEqual(len(reconcile), 1, lines)
+        self.assertLess(up, health)
+        self.assertLess(health, reconcile[0])
 
 
 @unittest.skipUnless(shutil.which("fish"), "requiere fish")
