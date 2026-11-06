@@ -24,30 +24,18 @@ from trl.chat_template_utils import get_training_chat_template
 
 from dataset_validation import load_jsonl
 from training_quality import (
+    TARGET_MODULE_PRESETS,
+    audit_token_lengths,
     count_prompt_overlaps,
     sha256_file,
     stable_sha256,
-    summarize_token_lengths,
 )
 
 SAFE_NAME = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$")
 
-# Qwen3.5 es híbrido: de sus 24 capas solo 6 son atención completa y 18 son
-# atención lineal de estado recurrente. En esas capas `in_proj_a` e `in_proj_b`
-# no son proyecciones corrientes: producen el decaimiento y la puerta que
-# gobiernan el estado recurrente. Entrenar LoRA sobre ellas desestabiliza esa
-# recurrencia y la generación degenera en bucles de repetición, aunque el
-# eval_loss con teacher forcing mejore.
-#
-# `attention-mlp` es el conjunto clásico de LoRA: cubre el MLP de las 24 capas y
-# la atención de las 6 completas, sin tocar ninguna puerta de estado.
-TARGET_MODULE_PRESETS = {
-    "attention-mlp": [
-        "q_proj", "k_proj", "v_proj", "o_proj",
-        "gate_proj", "up_proj", "down_proj",
-    ],
-    "all-linear": "all-linear",
-}
+# `TARGET_MODULE_PRESETS` está en training_quality.py, compartido con
+# train_axolotl.py; allí se explica por qué `attention-mlp` es el valor por
+# defecto para Qwen3.5.
 
 
 def arguments() -> argparse.Namespace:
@@ -161,92 +149,6 @@ def pretrained_kwargs(revision: str | None) -> dict[str, object]:
     if revision:
         kwargs["revision"] = revision
     return kwargs
-
-
-def _as_flat_list(value: object) -> list:
-    if hasattr(value, "tolist"):
-        value = value.tolist()
-    while isinstance(value, list) and len(value) == 1 and isinstance(value[0], list):
-        value = value[0]
-    return value if isinstance(value, list) else []
-
-
-def audit_token_lengths(
-    tokenizer,
-    examples: list[dict],
-    max_length: int,
-    label: str,
-    allow_truncation: bool,
-) -> dict:
-    """Mide el texto con la misma plantilla que usará SFTTrainer."""
-    total_tokens: list[int] = []
-    assistant_tokens: list[int] = []
-    truncated_examples: list[bool] = []
-    target_truncated: list[bool] = []
-    empty_assistant_after_limit: list[bool] = []
-
-    for number, example in enumerate(examples, 1):
-        encoded = tokenizer.apply_chat_template(
-            example["messages"],
-            tokenize=True,
-            return_dict=True,
-            return_assistant_tokens_mask=True,
-            add_generation_prompt=False,
-        )
-        input_ids = _as_flat_list(encoded.get("input_ids"))
-        assistant_mask = _as_flat_list(encoded.get("assistant_masks"))
-        if not input_ids or len(input_ids) != len(assistant_mask):
-            raise RuntimeError(
-                f"La auditoría de tokens no pudo validar el ejemplo {number} de {label}."
-            )
-        if not any(bool(value) for value in assistant_mask):
-            raise RuntimeError(
-                f"El ejemplo {number} de {label} no contiene tokens assistant entrenables."
-            )
-
-        total = len(input_ids)
-        assistant = sum(int(bool(value)) for value in assistant_mask)
-        truncated = total > max_length
-        target_would_be_truncated = any(
-            bool(value) for value in assistant_mask[max_length:]
-        )
-        empty_after_limit = not any(
-            bool(value) for value in assistant_mask[:max_length]
-        )
-
-        total_tokens.append(total)
-        assistant_tokens.append(assistant)
-        truncated_examples.append(truncated)
-        target_truncated.append(target_would_be_truncated)
-        empty_assistant_after_limit.append(empty_after_limit)
-
-    summary = summarize_token_lengths(
-        total_tokens,
-        assistant_tokens,
-        max_length,
-        truncated_examples,
-        target_truncated,
-        empty_assistant_after_limit,
-    )
-    print(json.dumps({"dataset": label, **summary}, ensure_ascii=False))
-
-    if summary["emptyAssistantAfterLimit"]:
-        raise RuntimeError(
-            f"{summary['emptyAssistantAfterLimit']} ejemplos de {label} quedarían sin "
-            "tokens assistant dentro de --max-length."
-        )
-    if summary["targetTruncatedExamples"] and not allow_truncation:
-        raise RuntimeError(
-            f"{summary['targetTruncatedExamples']} respuestas de {label} quedarían "
-            f"truncadas por --max-length={max_length}. Aumenta --max-length o usa "
-            "--allow-truncation de forma explícita."
-        )
-    if summary["targetTruncatedExamples"]:
-        print(
-            f"Aviso: {summary['targetTruncatedExamples']} respuestas de {label} "
-            "serán truncadas porque se solicitó --allow-truncation."
-        )
-    return summary
 
 
 def git_revision() -> str | None:
