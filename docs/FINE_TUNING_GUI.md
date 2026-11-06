@@ -70,7 +70,7 @@ ese estado.
 
 Selecciona un `.jsonl`. Antes de guardarlo en `trainer/datasets/`, la GUI lo valida con `trainer/dataset_validation.py`, que es el validador canónico del proyecto.
 
-Cualquier error al analizarlo, incluido un JSON demasiado anidado, se informa como dataset inválido; el archivo temporal de la subida se borra siempre.
+Cualquier error al analizarlo, incluido un JSON con más de 512 niveles de anidamiento, se informa como dataset inválido; el archivo temporal de la subida se borra siempre.
 
 `trainer/examples/base-training.jsonl` sirve únicamente para comprobar el pipeline. No es un dataset suficiente para medir calidad real.
 

@@ -72,6 +72,41 @@ class DatasetUploadTests(unittest.TestCase):
 
         self.assertEqual((status, body), (400, {"error": "JSON inválido."}))
 
+    def test_dataset_nested_over_512_levels_is_rejected_on_any_stack(self):
+        line = '{"messages":' + "[" * 512 + "]" * 512 + "}"
+
+        status, body = self.upload(line + "\n")
+
+        self.assertEqual(status, 422)
+        self.assertEqual(body, {"error": "No se pudo analizar el dataset: el JSON está demasiado anidado."})
+        self.assertEqual(list(self.datasets.iterdir()), [])
+
+    def test_request_body_nested_over_512_levels_is_invalid_json(self):
+        raw = ('{"filename": "datos.jsonl", "content": ' + "[" * 512 + "]" * 512 + "}").encode()
+
+        status, body = request("127.0.0.1", self.port, "POST", "/api/datasets", raw=raw)
+
+        self.assertEqual((status, body), (400, {"error": "JSON inválido."}))
+
+    def test_request_body_nested_exactly_512_levels_is_still_parsed(self):
+        raw = ('{"filename": "datos.jsonl", "content": ' + "[" * 511 + "]" * 511 + "}").encode()
+
+        status, body = request("127.0.0.1", self.port, "POST", "/api/datasets", raw=raw)
+
+        self.assertEqual((status, body), (400, {"error": "Contenido de dataset inválido."}))
+
+    def test_brackets_inside_strings_do_not_count_as_nesting(self):
+        brackets = "[{" * 600 + '\\"' + "}]" * 600
+        line = json.dumps({"messages": [
+            {"role": "user", "content": brackets},
+            {"role": "assistant", "content": "chao"},
+        ]})
+
+        status, body = self.upload(line + "\n")
+
+        self.assertEqual(status, 201)
+        self.assertEqual(body["validation"]["valid"], True)
+
     def test_invalid_dataset_keeps_previous_message(self):
         status, body = self.upload('{"messages": []}\n')
 

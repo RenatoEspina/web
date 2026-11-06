@@ -41,6 +41,11 @@ ADAPTER_DIR = ROOT / "adapters"
 RUNTIME_DIR = ROOT / ".runtime"
 ENVIRONMENT_CHECK = TRAINER_DIR / "check_environment.py"
 MAX_BODY_BYTES = 40 * 1024 * 1024
+# json.loads only fails on deep nesting when the interpreter runs out of stack,
+# which varies between machines; this fixed limit makes the rejection
+# deterministic. Real payloads and dataset lines nest a handful of levels.
+MAX_JSON_DEPTH = 512
+JSON_DEPTH_TOKEN = re.compile(r'"[^"\\]*(?:\\.[^"\\]*)*"|[\[\]{}]')
 MAX_LOG_LINES = 2500
 MAX_HF_TOKEN_LENGTH = 4096
 SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
@@ -279,8 +284,29 @@ def dataset_path(dataset_id: Any) -> Path:
     return candidate
 
 
+def json_too_deep(text: str) -> bool:
+    """Return True when arrays/objects nest deeper than MAX_JSON_DEPTH.
+
+    Brackets inside JSON strings do not count. Malformed JSON is left for
+    json.loads to report with its usual error.
+    """
+    depth = 0
+    for match in JSON_DEPTH_TOKEN.finditer(text):
+        token = match.group()
+        if token == "[" or token == "{":
+            depth += 1
+            if depth > MAX_JSON_DEPTH:
+                return True
+        elif token == "]" or token == "}":
+            depth -= 1
+    return False
+
+
 def dataset_summary(path: Path) -> dict[str, Any]:
     try:
+        with path.open(encoding="utf-8", errors="replace") as lines:
+            if any(json_too_deep(line) for line in lines):
+                raise RecursionError
         _, summary = load_jsonl(path)
         return dict(summary)
     except (OSError, ValueError, json.JSONDecodeError) as error:
@@ -1394,8 +1420,11 @@ class Handler(BaseHTTPRequestHandler):
             raise ValueError("Content-Length inválido.") from error
         if length <= 0 or length > MAX_BODY_BYTES:
             raise ValueError("Solicitud vacía o demasiado grande.")
+        raw = self.rfile.read(length)
         try:
-            payload = json.loads(self.rfile.read(length))
+            if json_too_deep(raw.decode("utf-8", errors="replace")):
+                raise RecursionError
+            payload = json.loads(raw)
         except (json.JSONDecodeError, RecursionError) as error:
             raise ValueError("JSON inválido.") from error
         if not isinstance(payload, dict):

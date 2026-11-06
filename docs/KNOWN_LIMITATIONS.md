@@ -144,7 +144,7 @@ Los siguientes problemas ya no se consideran errores conocidos porque cuentan co
 - **FT-07:** la GUI distingue `venvPresent` de `environmentVerified`; la insignia verde depende de una comprobación real persistida.
 - **FT-08:** cancelar un entrenamiento (SIGINT o SIGTERM) borra el staging de esa corrida en ambos backends.
 - **FT-09:** `mix_replay.py` valida ambos splits antes de escribir, los publica de forma atómica y borra una validación obsoleta.
-- **FT-10:** cualquier error al parsear un dataset subido responde 422 en JSON y el temporal siempre se borra. En Python 3.14 `RecursionError` ya respondía 409, pero el temporal sí quedaba.
+- **FT-10:** cualquier error al parsear un dataset subido responde 422 en JSON y el temporal siempre se borra. En Python 3.14 `RecursionError` ya respondía 409, pero el temporal sí quedaba. El JSON con más de 512 niveles de anidamiento se rechaza con un límite fijo (400 "JSON inválido." en la solicitud, 422 en el dataset), sin depender de la pila del intérprete, que cambia entre máquinas.
 - **FT-11:** ambas GUIs validan todo el payload antes de cualquier efecto, incluido el contenedor root de `ensure_adapter_dir_writable`.
 - **FT-13:** `--host ::1` sirve por IPv6.
 - **GW-01:** `HOST` y `PORT` de `.env.local` llegan al servidor de desarrollo de Vite (`loadEnv`); las variables del proceso siguen teniendo prioridad.
