@@ -293,11 +293,15 @@ function reconcile_adapters
         end
     end
     if test -z "$python_command"
-        echo "Aviso: no se encontró Python para reconciliar LLM_ADAPTER_MODELS." >&2
+        # Sin Python no se puede verificar la allowlist: es un error solo si tiene adaptadores.
+        if test -f "$project_dir/.env.local"; and grep -Eq '^LLM_ADAPTER_MODELS=.*[^[:space:],]' "$project_dir/.env.local"
+            echo "Error: no se encontró Python para reconciliar LLM_ADAPTER_MODELS." >&2
+            return 1
+        end
         return 0
     end
-    $python_command trainer/runtime_adapters.py $argv; or echo \
-        "Aviso: no se pudo reconciliar LLM_ADAPTER_MODELS; revisa la allowlist en la GUI." >&2
+    # Falla cerrado: un adaptador que no se pudo verificar se conserva y el estado es de error.
+    $python_command trainer/runtime_adapters.py $argv
 end
 
 function prepare_embeddings
@@ -420,11 +424,16 @@ function start_vllm
     echo "Si la web ya estaba ejecutándose, reiníciala para que relea .env.local."
 
     # Un LoRA entrenado sobre la base anterior no se recarga: se retira.
-    reconcile_adapters
+    set -l reconcile_failed false
+    reconcile_adapters; or set reconcile_failed true
 
     # Con vLLM ya iniciado, confirma que Ollama realmente puede servir embeddings.
     verify_embeddings "$default_embedding_model"
     compose ps vllm ollama
+
+    if test "$reconcile_failed" = true
+        fail "vLLM está activo, pero no se pudo reconciliar LLM_ADAPTER_MODELS; los adaptadores sin verificar siguen en la allowlist. Revisa el log anterior."
+    end
 end
 
 function start_ollama

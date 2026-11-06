@@ -8,6 +8,7 @@ import fcntl
 import http.client
 import json
 import os
+import shutil
 import signal
 import subprocess
 import sys
@@ -19,7 +20,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-TRAINER_DIR = Path(__file__).resolve().parents[1] / "trainer"
+REPO = Path(__file__).resolve().parents[1]
+TRAINER_DIR = REPO / "trainer"
 sys.path.insert(0, str(TRAINER_DIR))
 import gui_server  # noqa: E402
 
@@ -37,6 +39,19 @@ DETACHED_STDOUT = (
     "print('grandchild', child.pid, flush=True)\n"
     "print('ready', os.getpid(), flush=True)\n"
     "time.sleep(30)\n"
+)
+# El líder termina con SIGINT, pero un worker de su mismo grupo lo ignora (como
+# los workers de accelerate o Axolotl) y conserva el stdout heredado.
+LEADER_WITH_STUBBORN_WORKER = (
+    "import os, subprocess, sys, time\n"
+    "worker = subprocess.Popen([sys.executable, '-c', "
+    "'import signal, time; signal.signal(signal.SIGINT, signal.SIG_IGN); time.sleep(30)'])\n"
+    "print('worker', worker.pid, flush=True)\n"
+    "print('ready', os.getpid(), flush=True)\n"
+    "try:\n"
+    "    time.sleep(30)\n"
+    "except KeyboardInterrupt:\n"
+    "    pass\n"
 )
 LOCK_INHERITED = (
     'if [[ -n "${LLM_BRIDGE_GPU_LOCK_FD:-}" && "/dev/fd/$LLM_BRIDGE_GPU_LOCK_FD" -ef "$1" ]] '
@@ -409,6 +424,93 @@ class CancellationTests(LiveGuiTestCase):
     def test_cancel_without_running_job_keeps_returning_409(self):
         self.assertEqual(self.request("POST", "/api/job/cancel", {}), (409, {"cancelled": False}))
 
+    def test_job_is_not_finished_while_a_worker_of_its_group_survives(self):
+        with mock.patch.object(gui_server, "CANCEL_SIGINT_GRACE_SECONDS", 1.5, create=True):
+            self.use_command(sys.executable, "-c", LEADER_WITH_STUBBORN_WORKER)
+            self.start_check()
+            self.wait_for_log("ready")
+            leader = self.running_process_pid()
+            worker = int(next(line.split()[1] for line in self.job()["logs"] if line.startswith("worker")))
+            self.spawned.append(worker)
+
+            self.request("POST", "/api/job/cancel", {})
+            self.assertTrue(wait_until(lambda: not pid_alive(leader), timeout=3))
+            time.sleep(2 * self.grace)
+
+            self.assertTrue(pid_alive(worker))
+            self.assertEqual(self.job()["status"], "running")
+            self.assertEqual(json.loads(self.record_path.read_text(encoding="utf-8"))["pgid"], leader)
+            status, body = self.request("POST", "/api/shutdown", {})
+            self.assertEqual(status, 409)
+            self.assertIn("operación en curso", body["error"])
+
+            self.assertTrue(self.wait_finished(timeout=5), self.job())
+        job = self.job()
+        self.assertEqual(job["status"], "cancelled")
+        self.assertIn("SIGTERM", "\n".join(job["logs"]))
+        self.assertFalse(pid_alive(worker))
+        self.assertFalse(self.record_path.exists())
+
+
+@unittest.skipUnless(shutil.which("flock"), "requiere flock (util-linux)")
+class CancelledTrainingReconcileTests(LiveGuiTestCase):
+    """FT-03: cancelar un entrenamiento con vLLM activo no deja la allowlist desincronizada."""
+
+    grace = 1.0
+
+    def fake(self, directory, name, body):
+        path = directory / name
+        path.write_text("#!/usr/bin/env bash\n" + body, encoding="utf-8")
+        path.chmod(0o755)
+        return path
+
+    def test_cancelled_training_reconciles_when_vllm_is_back(self):
+        (self.root / "scripts").mkdir()
+        shutil.copy2(REPO / "scripts" / "train-adapter.sh", self.root / "scripts" / "train-adapter.sh")
+        fakebin = self.root / "fakebin"
+        fakebin.mkdir()
+        events = self.root / "events.log"
+        self.fake(fakebin, "docker", textwrap.dedent(f"""\
+            printf 'docker %s\\n' "$*" >> {events}
+            if [[ "$*" == "compose -p llm-bridge ps --status running --services" ]]; then echo vllm; fi
+            exit 0
+        """))
+        python = self.fake(fakebin, "trainer-python", textwrap.dedent(f"""\
+            printf 'python %s\\n' "$*" >> {events}
+            case "$1" in
+              -) cat >/dev/null; echo "Org/Base" ;;
+              trainer/train.py) echo TRAIN_STARTED; sleep 30 ;;
+              trainer/runtime_adapters.py) echo RECONCILE_WAITING; sleep 30 ;;
+            esac
+            exit 0
+        """))
+        env_file = self.root / ".env.local"
+        env_file.write_text("LLM_ADAPTER_MODELS=prev-lora\n", encoding="utf-8")
+        environment = {"PATH": f"{fakebin}{os.pathsep}{os.environ.get('PATH', '')}", "FINE_TUNE_PYTHON": str(python)}
+        with mock.patch.dict(os.environ, environment), mock.patch.object(gui_server, "trainer_python", return_value=python):
+            status, body = self.request("POST", "/api/actions", {
+                "action": "train", "dataset": "examples/minimal.jsonl", "name": "nuevo"})
+            self.assertEqual(status, 202, body)
+            self.wait_for_log("TRAIN_STARTED", timeout=10)
+            self.request("POST", "/api/job/cancel", {})
+            self.assertTrue(self.wait_finished(timeout=15), self.job())
+
+        self.assertEqual(self.job()["status"], "cancelled")
+        self.assertIn("docker compose -p llm-bridge up -d vllm", events.read_text(encoding="utf-8"))
+        self.assertEqual(env_file.read_text(encoding="utf-8"), "LLM_ADAPTER_MODELS=prev-lora\n")
+        self.assertTrue((self.runtime / "adapters-reconcile-pending").exists())
+
+        with mock.patch.object(gui_server, "fetch_vllm_models", return_value=(True, ["Org/Base"])), \
+                mock.patch.object(gui_server, "_LAST_AUTO_RECONCILE_FAILURE", None, create=True):
+            job = gui_server.maybe_start_pending_reconcile()
+            self.assertIsNotNone(job)
+            self.assertTrue(self.wait_finished(timeout=5))
+
+        self.assertEqual(self.job()["action"], "reconcile-adapters")
+        self.assertEqual(self.job()["status"], "succeeded")
+        self.assertEqual(env_file.read_text(encoding="utf-8"), "LLM_ADAPTER_MODELS=\n")
+        self.assertFalse((self.runtime / "adapters-reconcile-pending").exists())
+
 
 HARNESS = textwrap.dedent(
     """
@@ -425,14 +527,22 @@ HARNESS = textwrap.dedent(
     gui_server.CANCEL_SIGTERM_GRACE_SECONDS = 0.5
     gui_server.CANCEL_OUTPUT_DRAIN_SECONDS = 0.5
     job = None
-    if sys.argv[3] == "job":
+    if sys.argv[3] in {"job", "worker"}:
+        script = "import time; time.sleep(30)" if sys.argv[3] == "job" else sys.argv[4]
+        if sys.argv[3] == "worker":
+            # Más gracia para SIGINT que margen de stdout: el worker sobrevive a SIGINT.
+            gui_server.CANCEL_SIGINT_GRACE_SECONDS = 2.0
         def fake_run_action(job, payload):
-            gui_server.run_command(job, [sys.executable, "-c", "import time; time.sleep(30)"])
+            gui_server.run_command(job, [sys.executable, "-c", script])
         gui_server.run_action = fake_run_action
         job = gui_server.start_job("check", {})
         while job.process is None:
             time.sleep(0.02)
         print("child", job.process.pid, flush=True)
+        if sys.argv[3] == "worker":
+            while not any(line.startswith("worker") for line in list(job.logs)):
+                time.sleep(0.02)
+            print(next(line for line in list(job.logs) if line.startswith("worker")), flush=True)
     sys.argv = ["gui_server.py", "--port", "0"]
     try:
         gui_server.main()
@@ -454,9 +564,9 @@ class ProcessLifecycleTests(unittest.TestCase):
         self.harness = self.root / "harness.py"
         self.harness.write_text(HARNESS, encoding="utf-8")
 
-    def launch(self, mode):
+    def launch(self, mode, *extra):
         process = subprocess.Popen(
-            [sys.executable, "-u", str(self.harness), str(TRAINER_DIR), str(self.root), mode],
+            [sys.executable, "-u", str(self.harness), str(TRAINER_DIR), str(self.root), mode, *extra],
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
         )
         self.addCleanup(lambda: (process.poll() is None and process.kill(), process.wait()))
@@ -498,6 +608,21 @@ class ProcessLifecycleTests(unittest.TestCase):
         self.assertIn("train", joined)
         self.assertEqual(json.loads(self.record_path.read_text(encoding="utf-8"))["pgid"], orphan.pid)
         self.assertEqual(process.returncode, 143, output)
+
+    def test_sigterm_waits_until_the_whole_process_group_is_gone(self):
+        process, lines = self.launch("worker", LEADER_WITH_STUBBORN_WORKER)
+        child = int(next(line.split()[1] for line in lines if line.startswith("child")))
+        worker = int(next(line.split()[1] for line in lines if line.startswith("worker")))
+        self.addCleanup(kill_quietly, child, group=True)
+        self.addCleanup(kill_quietly, worker)
+
+        process.send_signal(signal.SIGTERM)
+        output, _ = process.communicate(timeout=15)
+
+        self.assertEqual(process.returncode, 143, output)
+        self.assertIn("job-status cancelled", output)
+        self.assertTrue(wait_until(lambda: not pid_alive(worker), timeout=2))
+        self.assertFalse(self.record_path.exists())
 
     def test_startup_discards_record_of_finished_process_group(self):
         finished = subprocess.Popen([sys.executable, "-c", "pass"], start_new_session=True)

@@ -168,6 +168,11 @@ PY
     else
       echo "Aviso: no se pudo detectar el modelo base activo; el reinicio usará la configuración normal de Compose." >&2
     fi
+    # Detener vLLM descarta los LoRA cargados: la reconciliación de la allowlist
+    # queda pendiente hasta completarse (trainer/runtime_adapters.py borra esta
+    # marca). Si una cancelación la interrumpe, la GUI la termina al volver vLLM.
+    mkdir -p -- "$(dirname -- "$gpu_lock_file")"
+    : > "$(dirname -- "$gpu_lock_file")/adapters-reconcile-pending"
     compose stop vllm
   fi
 else

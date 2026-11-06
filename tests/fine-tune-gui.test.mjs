@@ -20,7 +20,7 @@ test("la GUI de fine-tuning queda restringida a loopback", () => {
 });
 
 test("la GUI solo admite acciones administrativas predefinidas", () => {
-  assert.match(server, /allowed = \{"setup", "check", "train", "start-vllm", "stop-vllm", "load-adapter", "unload-adapter", "verify-adapter", "delete-adapter"\}/);
+  assert.match(server, /allowed = \{"setup", "check", "train", "start-vllm", "stop-vllm", "load-adapter", "unload-adapter", "verify-adapter", "delete-adapter", "reconcile-adapters"\}/);
   assert.match(server, /Dataset fuera de las carpetas permitidas/);
   assert.match(server, /x-fine-tune-token/i);
 });
@@ -186,4 +186,10 @@ test("el badge verde del entorno depende de una comprobación real, no solo del 
   assert.match(gui, /if\(index===0\)return Boolean\(currentStatus\?\.environmentVerified\)/);
   assert.doesNotMatch(gui, /Entorno: listo/);
   assert.match(server, /"environmentVerified": verified/);
+});
+
+test("la GUI completa sola una reconciliación de la allowlist interrumpida", () => {
+  assert.match(gui, /"reconcile-adapters":"Reconciliando allowlist LoRA"/);
+  assert.match(server, /RECONCILE_MARKER_FILENAME = "adapters-reconcile-pending"/);
+  assert.match(server, /threading\.Thread\(target=watch_pending_reconcile/);
 });

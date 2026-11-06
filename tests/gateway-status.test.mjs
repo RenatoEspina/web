@@ -91,6 +91,22 @@ test("sin configuración el servidor de desarrollo conserva 127.0.0.1:3000", asy
   });
 });
 
+test("HOST= y PORT= vacíos en .env.local conservan 127.0.0.1:3000", async () => {
+  const { resolveDevServerAddress } = await vite.ssrLoadModule("/build/dev-server-address.ts");
+  const dir = await envDir("HOST=\nPORT=\n");
+  await withEnv({}, async () => {
+    assert.deepEqual(resolveDevServerAddress("development", dir), { host: "127.0.0.1", port: 3000 });
+  });
+});
+
+test("HOST y PORT con solo espacios conservan 127.0.0.1:3000", async () => {
+  const { resolveDevServerAddress } = await vite.ssrLoadModule("/build/dev-server-address.ts");
+  const dir = await envDir("HOST=\"  \"\nPORT=\" \"\n");
+  await withEnv({}, async () => {
+    assert.deepEqual(resolveDevServerAddress("development", dir), { host: "127.0.0.1", port: 3000 });
+  });
+});
+
 test("vite.config.ts resuelve host y puerto con los archivos de entorno", async () => {
   const { readFile } = await import("node:fs/promises");
   const config = await readFile(path.join(root, "vite.config.ts"), "utf8");

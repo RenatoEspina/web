@@ -164,11 +164,14 @@ class TrainingScriptRestartTests(unittest.TestCase):
 
     def run_training(self, script, *, vllm_running=True, train_exit=0):
         project = ScratchProject(self)
+        self.project = project
         events = project.root / "events.log"
         running = "echo vllm" if vllm_running else "true"
+        marker = project.runtime / "adapters-reconcile-pending"
         project.fake("docker", textwrap.dedent(f"""\
             printf 'docker %s\\n' "$*" >> {events}
             if [[ "$*" == "compose -p llm-bridge ps --status running --services" ]]; then {running}; fi
+            if [[ "$*" == "compose -p llm-bridge stop vllm" && -e {marker} ]]; then echo "marker-before-stop" >> {events}; fi
             exit 0
         """))
         python = project.fake("trainer-python", textwrap.dedent(f"""\
@@ -221,6 +224,17 @@ class TrainingScriptRestartTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertFalse([line for line in lines if "up -d vllm" in line or "runtime_adapters" in line])
                 self.index(lines, "trainer/train")
+                self.assertFalse((self.project.runtime / "adapters-reconcile-pending").exists())
+
+    def test_stopping_vllm_marks_reconciliation_pending_until_it_completes(self):
+        for script in SCRIPTS:
+            with self.subTest(script=script):
+                result, lines, _ = self.run_training(script)
+
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertLess(self.index(lines, "marker-before-stop"), self.index(lines, "trainer/train"))
+                # El reconciliador falso no la completa: la marca sigue pendiente.
+                self.assertTrue((self.project.runtime / "adapters-reconcile-pending").exists())
 
 
 @unittest.skipUnless(shutil.which("fish"), "requiere fish")
@@ -247,6 +261,65 @@ class FishVllmReconcileTests(unittest.TestCase):
         self.assertEqual(len(reconcile), 1, lines)
         self.assertLess(up, health)
         self.assertLess(health, reconcile[0])
+
+
+@unittest.skipUnless(shutil.which("fish"), "requiere fish")
+class FishVllmFailClosedTests(unittest.TestCase):
+    """FT-03: ./comandos.fish vllm no informa éxito si la reconciliación falla."""
+
+    def project_with_fakes(self, *, python_exit=0, with_python=True, restricted_path=False):
+        project = ScratchProject(self)
+        self.events = project.root / "events.log"
+        project.fake("docker", f"printf 'docker %s\\n' \"$*\" >> {self.events}\nexit 0\n")
+        project.fake("curl", f"printf 'curl %s\\n' \"$*\" >> {self.events}\nexit 0\n")
+        if with_python:
+            for name in ("python3.13", "python3", "python"):
+                project.fake(name, f"printf 'python %s\\n' \"$*\" >> {self.events}\nexit {python_exit}\n")
+        env = project.env(LLM_BRIDGE_NONINTERACTIVE="1", HF_TOKEN="")
+        if restricted_path:
+            # PATH sin ningún intérprete Python: solo los fakes y las utilidades que usa comandos.fish.
+            for tool in ("bash", "dirname", "awk", "rm", "chmod", "mv", "grep", "date", "sleep"):
+                (project.bin / tool).symlink_to(shutil.which(tool))
+            env["PATH"] = str(project.bin)
+        return project, env
+
+    def start_vllm(self, project, env):
+        return subprocess.run(
+            [shutil.which("fish"), str(project.root / "comandos.fish"), "vllm", "Org/Modelo"],
+            cwd=project.root, env=env, capture_output=True, text=True, timeout=60,
+        )
+
+    def test_failed_reconciliation_makes_the_command_fail(self):
+        project, env = self.project_with_fakes(python_exit=1)
+        (project.root / ".env.local").write_text("LLM_ADAPTER_MODELS=valido\n", encoding="utf-8")
+
+        result = self.start_vllm(project, env)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("no se pudo reconciliar LLM_ADAPTER_MODELS", result.stderr)
+        lines = self.events.read_text(encoding="utf-8").splitlines()
+        reconcile = lines.index("python trainer/runtime_adapters.py")
+        self.assertTrue([line for line in lines[reconcile:] if "11434/api/embed" in line])
+        self.assertEqual((project.root / ".env.local").read_text(encoding="utf-8"),
+                         "LLM_ADAPTER_MODELS=valido\nLLM_MODEL=Org/Modelo\n")
+
+    def test_missing_python_with_allowlisted_adapters_fails_closed(self):
+        project, env = self.project_with_fakes(with_python=False, restricted_path=True)
+        (project.root / ".env.local").write_text("LLM_ADAPTER_MODELS=valido\n", encoding="utf-8")
+
+        result = self.start_vllm(project, env)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("no se encontró Python para reconciliar LLM_ADAPTER_MODELS", result.stderr)
+
+    def test_missing_python_with_empty_allowlist_still_succeeds(self):
+        project, env = self.project_with_fakes(with_python=False, restricted_path=True)
+        (project.root / ".env.local").write_text("LLM_ADAPTER_MODELS=\n", encoding="utf-8")
+
+        result = self.start_vllm(project, env)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("LLM_MODEL sincronizado en .env.local: Org/Modelo", result.stdout)
 
 
 @unittest.skipUnless(shutil.which("fish"), "requiere fish")

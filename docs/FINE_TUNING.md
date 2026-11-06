@@ -120,7 +120,9 @@ POST /v1/unload_lora_adapter
 
 Al cargar un adaptador, la GUI también lo incorpora a `LLM_ADAPTER_MODELS` en `.env.local`. Al descargarlo, lo retira de esa allowlist. Si el gateway web ya estaba ejecutándose, reinícialo para que relea el entorno.
 
-Un reinicio de vLLM descarta los adaptadores cargados dinámicamente. `./comandos.fish vllm` y `scripts/train-adapter*.sh` (cuando reinician vLLM después de entrenar) ejecutan `trainer/runtime_adapters.py`, que recarga cada adaptador de `LLM_ADAPTER_MODELS` validando su base o lo retira de la allowlist. Se puede ejecutar a mano con vLLM activo:
+Un reinicio de vLLM descarta los adaptadores cargados dinámicamente. `./comandos.fish vllm` y `scripts/train-adapter*.sh` (cuando reinician vLLM después de entrenar) ejecutan `trainer/runtime_adapters.py`, que recarga cada adaptador de `LLM_ADAPTER_MODELS` validando su base. Solo retira de la allowlist las entradas inválidas en sí mismas: el adaptador ya no existe, sus metadatos son inválidos o vLLM sirve otra base. Ante un fallo de infraestructura (falta el intérprete, falla la exportación o vLLM responde con error) conserva el adaptador y termina con código 1; `./comandos.fish vllm` también termina con error en ese caso. La exportación usa `FINE_TUNE_PYTHON`, el venv básico o, si es el único disponible, `trainer/.venv-axolotl`.
+
+Si una cancelación (`Ctrl+C`) interrumpe la reconciliación posterior al entrenamiento, queda pendiente en `.runtime/adapters-reconcile-pending`. La completa la GUI de fine-tuning cuando vLLM vuelve a responder, el siguiente `./comandos.fish vllm` o una ejecución manual. Se puede ejecutar a mano con vLLM activo:
 
 ```bash
 python3 trainer/runtime_adapters.py

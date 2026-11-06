@@ -2,14 +2,41 @@
 import contextlib
 import io
 import json
+import os
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
+from urllib.error import URLError
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "trainer"))
 import gui_server  # noqa: E402
+
+# gui_server_axolotl modifica gui_server al importarse: se importa solo dentro de
+# este módulo de tests y se restauran los atributos al terminar.
+PATCHED_BY_AXOLOTL = (
+    "trainer_python", "setup_environment", "check_training_environment", "ENVIRONMENT_CHECK",
+    "run_action", "status_payload", "Handler",
+)
+_ORIGINAL_CORE = {}
+axolotl = None
+
+
+def setUpModule():
+    global axolotl
+    _ORIGINAL_CORE.update({name: getattr(gui_server, name) for name in PATCHED_BY_AXOLOTL})
+    import gui_server_axolotl
+    axolotl = gui_server_axolotl
+    for name, value in _ORIGINAL_CORE.items():
+        setattr(gui_server, name, value)
+
+
+def tearDownModule():
+    for name, value in _ORIGINAL_CORE.items():
+        setattr(gui_server, name, value)
+    sys.modules.pop("gui_server_axolotl", None)
 
 
 class AllowlistTestCase(unittest.TestCase):
@@ -20,7 +47,8 @@ class AllowlistTestCase(unittest.TestCase):
         self.adapters = self.root / "adapters"
         self.adapters.mkdir()
         self.env_file = self.root / ".env.local"
-        for name, value in (("ROOT", self.root), ("ADAPTER_DIR", self.adapters)):
+        self.marker = self.root / ".runtime" / "adapters-reconcile-pending"
+        for name, value in (("ROOT", self.root), ("ADAPTER_DIR", self.adapters), ("RUNTIME_DIR", self.root / ".runtime")):
             patcher = mock.patch.object(gui_server, name, value)
             patcher.start()
             self.addCleanup(patcher.stop)
@@ -49,7 +77,7 @@ class ReconcileTests(AllowlistTestCase):
 
         def base(name):
             if name == "otra-base":
-                raise RuntimeError("El adaptador 'otra-base' fue entrenado sobre 'Org/Vieja'")
+                raise gui_server.AdapterBaseMismatch("El adaptador 'otra-base' fue entrenado sobre 'Org/Vieja'")
             return "Org/Base"
 
         self.patch("validate_adapter_base", side_effect=base)
@@ -85,6 +113,113 @@ class ReconcileTests(AllowlistTestCase):
         self.assertEqual(result, {"kept": [], "reloaded": [], "removed": []})
         fetch.assert_not_called()
         self.assertFalse(self.env_file.exists())
+
+
+class FailClosedReconcileTests(AllowlistTestCase):
+    """Un fallo de infraestructura nunca retira un adaptador válido de la allowlist."""
+
+    def setUp(self):
+        super().setUp()
+        self.env_file.write_text("LLM_ADAPTER_MODELS=valido,borrado\n", encoding="utf-8")
+        self.adapter("valido")
+        self.patch("fetch_vllm_models", return_value=(True, ["Org/Base"]))
+        self.marker.parent.mkdir(parents=True, exist_ok=True)
+        self.marker.write_text("", encoding="utf-8")
+
+    def assert_failed_closed(self, job, raised):
+        self.assertIn("valido", str(raised.exception))
+        self.assertIn("se conserva", str(raised.exception))
+        self.assertEqual(self.env_file.read_text(encoding="utf-8"), "LLM_ADAPTER_MODELS=valido\n")
+        self.assertTrue(self.marker.exists())
+        self.assertIn("borrado", "\n".join(job.logs))
+
+    def test_export_failure_keeps_the_adapter(self):
+        self.patch("validate_adapter_base", return_value="Org/Base")
+        self.patch("prepare_runtime_adapter", side_effect=RuntimeError("El proceso terminó con código 1."))
+        post = self.patch("post_vllm")
+        job = gui_server.Job(id="test", action="start-vllm")
+
+        with self.assertRaises(RuntimeError) as raised:
+            gui_server.reconcile_adapter_allowlist(job)
+
+        post.assert_not_called()
+        self.assert_failed_closed(job, raised)
+
+    def test_missing_interpreter_keeps_the_adapter(self):
+        self.patch("validate_adapter_base", return_value="Org/Base")
+        self.patch("prepare_runtime_adapter", side_effect=FileNotFoundError("trainer/.venv/bin/python"))
+        job = gui_server.Job(id="test", action="start-vllm")
+
+        with self.assertRaises(RuntimeError) as raised:
+            gui_server.reconcile_adapter_allowlist(job)
+
+        self.assert_failed_closed(job, raised)
+
+    def test_vllm_load_error_keeps_the_adapter(self):
+        self.patch("validate_adapter_base", return_value="Org/Base")
+        self.patch("prepare_runtime_adapter", return_value="/adapters/valido")
+        self.patch("post_vllm", side_effect=RuntimeError("vLLM respondió HTTP 500."))
+        job = gui_server.Job(id="test", action="start-vllm")
+
+        with self.assertRaises(RuntimeError) as raised:
+            gui_server.reconcile_adapter_allowlist(job)
+
+        self.assert_failed_closed(job, raised)
+
+    def test_unreachable_vllm_during_base_check_keeps_the_adapter(self):
+        self.patch("urlopen", side_effect=URLError("connection refused"))
+        job = gui_server.Job(id="test", action="start-vllm")
+
+        with self.assertRaises(RuntimeError) as raised:
+            gui_server.reconcile_adapter_allowlist(job)
+
+        self.assert_failed_closed(job, raised)
+
+    def test_unknown_served_base_keeps_the_adapter(self):
+        self.patch("urlopen", side_effect=lambda *a, **k: io.BytesIO(json.dumps({"data": [{"id": "Org/Base"}]}).encode()))
+        job = gui_server.Job(id="test", action="start-vllm")
+
+        with self.assertRaises(RuntimeError) as raised:
+            gui_server.reconcile_adapter_allowlist(job)
+
+        self.assert_failed_closed(job, raised)
+
+    def test_real_base_mismatch_still_retires_the_adapter(self):
+        self.patch("urlopen", side_effect=lambda *a, **k: io.BytesIO(json.dumps({
+            "data": [{"id": "Org/Otra", "root": "Org/Otra"}]}).encode()))
+        job = gui_server.Job(id="test", action="start-vllm")
+
+        result = gui_server.reconcile_adapter_allowlist(job)
+
+        self.assertEqual(result, {"kept": [], "reloaded": [], "removed": ["valido", "borrado"]})
+        self.assertEqual(self.env_file.read_text(encoding="utf-8"), "LLM_ADAPTER_MODELS=\n")
+        self.assertFalse(self.marker.exists())
+
+    def test_invalid_adapter_metadata_still_retires_the_adapter(self):
+        (self.adapters / "valido" / "adapter_config.json").write_text("{}", encoding="utf-8")
+        self.patch("urlopen", side_effect=lambda *a, **k: io.BytesIO(json.dumps({
+            "data": [{"id": "Org/Base", "root": "Org/Base"}]}).encode()))
+
+        result = gui_server.reconcile_adapter_allowlist(gui_server.Job(id="test", action="start-vllm"))
+
+        self.assertEqual(result["removed"], ["valido", "borrado"])
+
+    def test_successful_reconcile_clears_pending_marker(self):
+        self.patch("validate_adapter_base", return_value="Org/Base")
+        self.patch("prepare_runtime_adapter", return_value="/adapters/valido")
+        self.patch("post_vllm", return_value="ok")
+
+        result = gui_server.reconcile_adapter_allowlist(gui_server.Job(id="test", action="start-vllm"))
+
+        self.assertEqual(result, {"kept": [], "reloaded": ["valido"], "removed": ["borrado"]})
+        self.assertFalse(self.marker.exists())
+
+    def test_empty_allowlist_clears_pending_marker(self):
+        self.env_file.write_text("LLM_ADAPTER_MODELS=\n", encoding="utf-8")
+
+        gui_server.reconcile_adapter_allowlist(gui_server.Job(id="test", action="start-vllm"))
+
+        self.assertFalse(self.marker.exists())
 
 
 class RetireFromAllowlistTests(AllowlistTestCase):
@@ -163,6 +298,44 @@ class ReconcileCommandTests(AllowlistTestCase):
         self.assertEqual(code, 0)
         self.assertEqual(wait.call_args.args[1], 600)
 
+    def test_command_fails_closed_when_export_fails(self):
+        self.env_file.write_text("LLM_ADAPTER_MODELS=valido\n", encoding="utf-8")
+        self.adapter("valido")
+        self.patch("fetch_vllm_models", return_value=(True, ["Org/Base"]))
+        self.patch("validate_adapter_base", return_value="Org/Base")
+        self.patch("prepare_runtime_adapter", side_effect=RuntimeError("El proceso terminó con código 1."))
+        stderr = io.StringIO()
+
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(stderr):
+            code = self.command.main([])
+
+        self.assertEqual(code, 1)
+        self.assertIn("valido", stderr.getvalue())
+        self.assertEqual(self.env_file.read_text(encoding="utf-8"), "LLM_ADAPTER_MODELS=valido\n")
+
+    def test_command_exports_with_the_axolotl_interpreter_when_it_is_the_only_one(self):
+        trainer = self.root / "trainer"
+        python = trainer / ".venv-axolotl" / "bin" / "python"
+        python.parent.mkdir(parents=True)
+        python.write_text("#!/bin/sh\n", encoding="utf-8")
+        python.chmod(0o755)
+        self.patch("TRAINER_DIR", new=trainer)
+        self.env_file.write_text("LLM_ADAPTER_MODELS=valido\n", encoding="utf-8")
+        self.adapter("valido")
+        self.patch("fetch_vllm_models", return_value=(True, ["Org/Base"]))
+        self.patch("validate_adapter_base", return_value="Org/Base")
+        self.patch("needs_export", return_value=True)
+        self.patch("ensure_adapter_dir_writable")
+        run_command = self.patch("run_command", side_effect=RuntimeError("export falló"))
+        environment = {key: value for key, value in os.environ.items() if key != "FINE_TUNE_PYTHON"}
+
+        with mock.patch.dict(os.environ, environment, clear=True), \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            code = self.command.main([])
+
+        self.assertEqual(code, 1)
+        self.assertEqual(run_command.call_args.args[1][0], str(python))
+
     def test_command_reports_failure_without_traceback(self):
         self.env_file.write_text("LLM_ADAPTER_MODELS=a\n", encoding="utf-8")
         self.patch("fetch_vllm_models", return_value=(False, []))
@@ -174,6 +347,91 @@ class ReconcileCommandTests(AllowlistTestCase):
         self.assertEqual(code, 1)
         self.assertIn("Aviso: no se pudo reconciliar", stderr.getvalue())
         self.assertNotIn("Traceback", stderr.getvalue())
+
+
+class AxolotlStartVllmTests(AllowlistTestCase):
+    def test_start_vllm_propagates_the_backend_interpreter_to_reconciliation(self):
+        python = self.root / "venv-axolotl" / "bin" / "python"
+        python.parent.mkdir(parents=True)
+        python.write_text("#!/bin/sh\n", encoding="utf-8")
+        python.chmod(0o755)
+        run_command = self.patch("run_command")
+        self.patch("ensure_adapter_dir_writable")
+        # En el proceso de la GUI Axolotl, gui_server.trainer_python es axolotl_python.
+        with mock.patch.object(axolotl, "axolotl_python", return_value=python), \
+                mock.patch.object(gui_server, "trainer_python", lambda: axolotl.axolotl_python()), \
+                mock.patch.object(gui_server.shutil, "which", return_value="/usr/bin/fish"):
+            gui_server.run_action(gui_server.Job(id="test", action="start-vllm"), {"model": "Qwen/Qwen3.5-0.8B"})
+
+        env = run_command.call_args.kwargs["env"]
+        self.assertEqual(env["FINE_TUNE_PYTHON"], str(python))
+        self.assertEqual(env["VLLM_MODEL"], "Qwen/Qwen3.5-0.8B")
+
+
+class PendingReconcileTests(AllowlistTestCase):
+    """FT-03: una reconciliación interrumpida se completa al volver vLLM."""
+
+    def setUp(self):
+        super().setUp()
+        gui_server.CURRENT_JOB = None
+        self.addCleanup(setattr, gui_server, "CURRENT_JOB", None)
+        self.addCleanup(self.wait_current_job)
+        self.env_file.write_text("LLM_ADAPTER_MODELS=perdido\n", encoding="utf-8")
+        self.marker.parent.mkdir(parents=True, exist_ok=True)
+        self.marker.write_text("", encoding="utf-8")
+        self.patch("RECONCILE_RETRY_SECONDS", new=60.0, create=True)
+        self.patch("_LAST_AUTO_RECONCILE_FAILURE", new=None, create=True)
+
+    def wait_current_job(self):
+        job = gui_server.CURRENT_JOB
+        deadline = time.monotonic() + 5
+        while job is not None and job.status == "running" and time.monotonic() < deadline:
+            time.sleep(0.02)
+
+    def test_pending_marker_reconciles_once_vllm_is_healthy(self):
+        self.patch("fetch_vllm_models", return_value=(True, ["Org/Base"]))
+
+        job = gui_server.maybe_start_pending_reconcile()
+
+        self.assertIsNotNone(job)
+        self.assertEqual(job.action, "reconcile-adapters")
+        self.wait_current_job()
+        self.assertEqual(job.status, "succeeded")
+        self.assertEqual(job.result, {"kept": [], "reloaded": [], "removed": ["perdido"]})
+        self.assertEqual(self.env_file.read_text(encoding="utf-8"), "LLM_ADAPTER_MODELS=\n")
+        self.assertFalse(self.marker.exists())
+        self.assertIsNone(gui_server.maybe_start_pending_reconcile())
+
+    def test_nothing_happens_while_vllm_is_down(self):
+        self.patch("fetch_vllm_models", return_value=(False, []))
+
+        self.assertIsNone(gui_server.maybe_start_pending_reconcile())
+
+        self.assertTrue(self.marker.exists())
+        self.assertEqual(self.env_file.read_text(encoding="utf-8"), "LLM_ADAPTER_MODELS=perdido\n")
+
+    def test_failed_automatic_reconcile_backs_off(self):
+        self.adapter("perdido")
+        self.patch("fetch_vllm_models", return_value=(True, ["Org/Base"]))
+        self.patch("validate_adapter_base", return_value="Org/Base")
+        self.patch("prepare_runtime_adapter", side_effect=RuntimeError("export falló"))
+
+        job = gui_server.maybe_start_pending_reconcile()
+        self.wait_current_job()
+
+        self.assertEqual(job.status, "failed")
+        self.assertTrue(self.marker.exists())
+        self.assertEqual(self.env_file.read_text(encoding="utf-8"), "LLM_ADAPTER_MODELS=perdido\n")
+        self.assertIsNone(gui_server.maybe_start_pending_reconcile())
+
+    def test_reconcile_action_is_available_from_the_api(self):
+        self.patch("fetch_vllm_models", return_value=(True, ["Org/Base"]))
+
+        job = gui_server.start_job("reconcile-adapters", {})
+        self.wait_current_job()
+
+        self.assertEqual(job.status, "succeeded")
+        self.assertFalse(self.marker.exists())
 
 
 if __name__ == "__main__":
