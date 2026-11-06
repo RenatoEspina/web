@@ -229,64 +229,25 @@ def check_axolotl_environment(job: core.Job, label: str) -> None:
 
 
 def run_axolotl_train(job: core.Job, payload: dict[str, Any]) -> None:
-    dataset = core.dataset_path(payload.get("dataset"))
-    _, summary = core.load_jsonl(dataset)
+    # Misma validación completa que la GUI básica, antes de cualquier efecto.
+    request = core.validate_training_payload(payload)
     core.ensure_adapter_dir_writable(job)
-    name = core.validate_adapter_name(payload.get("name"))
-    model = core.validate_model(payload.get("model"))
-    hf_token = core.validate_hf_token(payload.pop("hfToken", ""))
-    rank = core.int_arg(payload, "rank", 16, 8, 32)
-    if rank not in {8, 16, 32}:
-        raise ValueError("rank debe ser 8, 16 o 32.")
-    alpha = core.int_arg(payload, "alpha", 32, 1, 256)
-    epochs = core.number_arg(payload, "epochs", 2.0, 0.1, 20.0)
-    dropout = core.number_arg(payload, "dropout", 0.05, 0.0, 0.5)
-    learning_rate = core.number_arg(payload, "learningRate", 1e-4, 1e-7, 0.1)
-    batch_size = core.int_arg(payload, "batchSize", 1, 1, 32)
-    gradient_accumulation = core.int_arg(payload, "gradientAccumulation", 8, 1, 256)
-    max_length = core.int_arg(payload, "maxLength", 1024, 128, 16384)
-    seed = core.int_arg(payload, "seed", 42, 0, 2_147_483_647)
 
     if not axolotl_environment_ready():
         setup_axolotl_environment(job, automatic=True)
     check_axolotl_environment(job, "Verificando entorno Axolotl")
 
-    command = [
-        "bash",
-        str(AXOLOTL_TRAIN_SCRIPT),
-        str(dataset),
-        name,
-        "--model",
-        model,
-        "--rank",
-        str(rank),
-        "--alpha",
-        str(alpha),
-        "--dropout",
-        str(dropout),
-        "--epochs",
-        str(epochs),
-        "--learning-rate",
-        str(learning_rate),
-        "--batch-size",
-        str(batch_size),
-        "--gradient-accumulation",
-        str(gradient_accumulation),
-        "--max-length",
-        str(max_length),
-        "--seed",
-        str(seed),
-    ]
-    env = core.environment_with_hf_token(hf_token)
+    command = ["bash", str(AXOLOTL_TRAIN_SCRIPT), *request.script_arguments()]
+    env = core.environment_with_hf_token(request.hf_token)
     env["FINE_TUNE_AXOLOTL_PYTHON"] = str(axolotl_python())
     env["COMPOSE_PROJECT_NAME"] = os.environ.get("COMPOSE_PROJECT_NAME", "llm-bridge")
-    if hf_token:
+    if request.hf_token:
         core.append_log(job, "Hugging Face: autenticación efímera habilitada para Axolotl.")
-    core.run_command(job, command, env=env, label=f"Entrenando {name} con Axolotl")
+    core.run_command(job, command, env=env, label=f"Entrenando {request.name} con Axolotl")
     job.result = {
-        "adapter": name,
-        "dataset": dataset.name,
-        "examples": summary["examples"],
+        "adapter": request.name,
+        "dataset": request.dataset.name,
+        "examples": request.examples,
         "backend": "axolotl",
     }
 

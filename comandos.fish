@@ -253,9 +253,19 @@ end
 function persist_llm_model
     set -l model $argv[1]
     set -l env_file "$project_dir/.env.local"
+    # Un .env.local enlazado se conserva: se reescribe el archivo apuntado.
+    if test -L "$env_file"; and test -e "$env_file"
+        set env_file (path resolve -- "$env_file")
+    end
     set -l temporary "$env_file.tmp"
     require_command awk
 
+    # .env.local puede contener APP_TOKEN o API keys: el temporal nace privado
+    # (umask 077) y después copia el modo del original, así reescribir LLM_MODEL
+    # nunca amplía sus permisos. Un archivo nuevo queda con modo 0600.
+    set -l previous_umask (umask)
+    umask 077
+    rm -f -- "$temporary"
     if test -f "$env_file"
         awk -v model="$model" '
             BEGIN { found = 0 }
@@ -263,9 +273,11 @@ function persist_llm_model
             { print }
             END { if (!found) print "LLM_MODEL=" model }
         ' "$env_file" > "$temporary"; or fail "No fue posible preparar la actualización de LLM_MODEL."
+        chmod --reference="$env_file" -- "$temporary"; or fail "No fue posible conservar los permisos de .env.local."
     else
         printf 'LLM_MODEL=%s\n' "$model" > "$temporary"; or fail "No fue posible crear .env.local."
     end
+    umask $previous_umask
 
     mv "$temporary" "$env_file"; or fail "No fue posible actualizar .env.local."
 end
