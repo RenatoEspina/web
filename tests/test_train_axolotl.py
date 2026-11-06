@@ -3,6 +3,7 @@ import hashlib
 import json
 import os
 import runpy
+import signal
 import sys
 import tempfile
 import unittest
@@ -95,7 +96,9 @@ class TrainAxolotlCliTests(unittest.TestCase):
         output_dir = Path(config["output_dir"])
         (output_dir / "checkpoint-1").mkdir(parents=True, exist_ok=True)
         (output_dir / "checkpoint-1" / "optimizer.pt").write_bytes(b"estado")
-        if self.run_effect is not None:
+        if callable(self.run_effect):
+            self.run_effect()
+        elif self.run_effect is not None:
             raise self.run_effect
         (output_dir / "adapter_config.json").write_text("{}", encoding="utf-8")
         (output_dir / "adapter_model.safetensors").write_bytes(b"pesos")
@@ -248,6 +251,24 @@ class TrainAxolotlCliTests(unittest.TestCase):
         with self.assertRaises(KeyboardInterrupt):
             self.run_cli()
 
+        self.assertEqual(len(self.calls), 1)
+        self.assert_only(entries)
+
+    def test_sigterm_cancellation_removes_only_its_own_staging_and_work_dir(self):
+        entries = self.create_unrelated_entries()
+        previous = signal.getsignal(signal.SIGTERM)
+        self.addCleanup(signal.signal, signal.SIGTERM, previous)
+
+        def fallback(signum, frame):
+            raise AssertionError("train_axolotl.py no instaló su handler de SIGTERM")
+
+        signal.signal(signal.SIGTERM, fallback)
+        self.run_effect = lambda: os.kill(os.getpid(), signal.SIGTERM)
+
+        with self.assertRaises(SystemExit) as raised:
+            self.run_cli()
+
+        self.assertEqual(raised.exception.code, 143)
         self.assertEqual(len(self.calls), 1)
         self.assert_only(entries)
 

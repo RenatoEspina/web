@@ -4,12 +4,27 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import signal
 import unicodedata
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
 _WHITESPACE = re.compile(r"\s+")
+
+
+def exit_on_sigterm() -> None:
+    """Convierte SIGTERM en `SystemExit(143)` para que corra la limpieza.
+
+    La GUI escala la cancelación de SIGINT a SIGTERM. Con el handler por
+    defecto, Python terminaría sin ejecutar los bloques `except BaseException`
+    y `finally` que borran el staging de la corrida.
+    """
+
+    def handle(signum, frame):
+        raise SystemExit(128 + signum)
+
+    signal.signal(signal.SIGTERM, handle)
 
 # Qwen3.5 es híbrido: de sus 24 capas solo 6 son atención completa y 18 son
 # atención lineal de estado recurrente. En esas capas `in_proj_a` e `in_proj_b`

@@ -2,6 +2,7 @@
 import json
 import os
 import runpy
+import signal
 import sys
 import tempfile
 import unittest
@@ -33,6 +34,24 @@ class FakeTokenizer:
         return {"input_ids": input_ids, "assistant_masks": assistant_masks}
 
 
+class UnhandledSigterm(BaseException):
+    """Lo lanza el handler de respaldo del test si la CLI no instaló el suyo."""
+
+
+def install_fallback_sigterm(test: unittest.TestCase) -> None:
+    previous = signal.getsignal(signal.SIGTERM)
+
+    def fallback(signum, frame):
+        raise UnhandledSigterm()
+
+    signal.signal(signal.SIGTERM, fallback)
+    test.addCleanup(signal.signal, signal.SIGTERM, previous)
+
+
+def send_sigterm(*args, **kwargs) -> None:
+    os.kill(os.getpid(), signal.SIGTERM)
+
+
 class TrainCliTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
@@ -53,7 +72,9 @@ class TrainCliTests(unittest.TestCase):
         self.stdout = StringIO()
 
     def load_config(self, *args, **kwargs):
-        if self.config_effect is not None:
+        if callable(self.config_effect):
+            self.config_effect()
+        elif self.config_effect is not None:
             raise self.config_effect
         return SimpleNamespace(model_type="qwen3_5")
 
@@ -132,6 +153,17 @@ class TrainCliTests(unittest.TestCase):
         with self.assertRaises(KeyboardInterrupt):
             self.run_cli()
 
+        self.assert_only(entries)
+
+    def test_sigterm_cancellation_removes_only_its_own_staging(self):
+        entries = self.create_unrelated_entries()
+        install_fallback_sigterm(self)
+        self.config_effect = send_sigterm
+
+        with self.assertRaises(SystemExit) as raised:
+            self.run_cli()
+
+        self.assertEqual(raised.exception.code, 143)
         self.assert_only(entries)
 
     def test_existing_adapter_is_never_overwritten(self):
